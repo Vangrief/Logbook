@@ -335,8 +335,12 @@ function drawMap(f) {
   const map = L.map("map", { zoomControl: true, attributionControl: true });
   mapInstance = map;
 
+  // CartoDB Positron (light) in light mode, Dark Matter in dark mode.
+  const tileStyle = document.body.classList.contains("light-mode")
+    ? "light_all"
+    : "dark_all";
   L.tileLayer(
-    "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+    `https://{s}.basemaps.cartocdn.com/${tileStyle}/{z}/{x}/{y}{r}.png`,
     {
       attribution:
         '&copy; OpenStreetMap &copy; CARTO · tracks via OpenSky Network',
@@ -395,10 +399,23 @@ function drawAltChart(f) {
       y: p[3] * 3.28084, // feet
     }));
 
+  // Pull theme colors from the active CSS variables so the chart matches
+  // light/dark mode.
+  const cv = (name) =>
+    getComputedStyle(document.body).getPropertyValue(name).trim();
+  const accent = cv("--amber");
+  const accentRgb = cv("--accent-rgb");
+  const cText = cv("--text");
+  const cDim = cv("--text-dim");
+  const cFaint = cv("--text-faint");
+  const cPanel = cv("--bg-2");
+  const cBorder = cv("--border");
+  const cGrid = cv("--chart-grid");
+
   const ctx = document.getElementById("alt-chart").getContext("2d");
   const grad = ctx.createLinearGradient(0, 0, 0, 220);
-  grad.addColorStop(0, "rgba(230, 57, 70, 0.35)");
-  grad.addColorStop(1, "rgba(230, 57, 70, 0.02)");
+  grad.addColorStop(0, `rgba(${accentRgb}, 0.35)`);
+  grad.addColorStop(1, `rgba(${accentRgb}, 0.02)`);
 
   altChart = new Chart(ctx, {
     type: "line",
@@ -406,7 +423,7 @@ function drawAltChart(f) {
       datasets: [
         {
           data: points,
-          borderColor: "#e63946",
+          borderColor: accent,
           backgroundColor: grad,
           borderWidth: 2,
           fill: true,
@@ -424,11 +441,11 @@ function drawAltChart(f) {
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: "#161616",
-          borderColor: "#2a1515",
+          backgroundColor: cPanel,
+          borderColor: cBorder,
           borderWidth: 1,
-          titleColor: "#8a8580",
-          bodyColor: "#f0ece4",
+          titleColor: cDim,
+          bodyColor: cText,
           bodyFont: { family: "JetBrains Mono" },
           callbacks: {
             title: (items) => `T+${items[0].parsed.x.toFixed(1)} min`,
@@ -439,14 +456,14 @@ function drawAltChart(f) {
       scales: {
         x: {
           type: "linear",
-          title: { display: true, text: "minutes", color: "#6b6560" },
-          ticks: { color: "#6b6560", font: { family: "JetBrains Mono", size: 10 } },
-          grid: { color: "rgba(42,21,21,0.6)" },
+          title: { display: true, text: "minutes", color: cFaint },
+          ticks: { color: cFaint, font: { family: "JetBrains Mono", size: 10 } },
+          grid: { color: cGrid },
         },
         y: {
-          title: { display: true, text: "feet", color: "#6b6560" },
-          ticks: { color: "#6b6560", font: { family: "JetBrains Mono", size: 10 } },
-          grid: { color: "rgba(42,21,21,0.6)" },
+          title: { display: true, text: "feet", color: cFaint },
+          ticks: { color: cFaint, font: { family: "JetBrains Mono", size: 10 } },
+          grid: { color: cGrid },
         },
       },
     },
@@ -873,7 +890,38 @@ function startClock() {
   setInterval(tick, 1000);
 }
 
+/* ---------------- Theme (light / dark) ---------------- */
+function applyTheme(theme) {
+  const light = theme === "light";
+  document.body.classList.toggle("light-mode", light);
+  const btn = document.getElementById("theme-toggle");
+  if (btn) {
+    btn.textContent = light ? "☀️" : "🌙";
+    btn.setAttribute(
+      "aria-label",
+      light ? "Switch to dark mode" : "Switch to light mode"
+    );
+  }
+}
+
+function initTheme() {
+  // Default to dark; honor saved preference.
+  applyTheme(localStorage.getItem("theme") === "light" ? "light" : "dark");
+  const btn = document.getElementById("theme-toggle");
+  if (btn) btn.onclick = toggleTheme;
+}
+
+function toggleTheme() {
+  const next = document.body.classList.contains("light-mode") ? "dark" : "light";
+  localStorage.setItem("theme", next);
+  applyTheme(next);
+  // The map tiles and chart are canvas/Leaflet and read the theme at draw
+  // time, so rebuild the detail view to pick up the new palette.
+  if (/^#\/flights\/\d+$/.test(window.location.hash)) router();
+}
+
 /* ---------------- Boot ---------------- */
+initTheme();
 loadBranding();
 startClock();
 router();
