@@ -615,6 +615,8 @@ function enterReplay(f) {
     speed: Number(speedSel.value) || 50,
     raf: null,
     lastNow: 0,
+    hdgSamples: [],       // rolling buffer of recent raw bearings
+    displayHeading: null, // continuous (unwrapped) shown rotation
     ghost,
     flown,
     marker,
@@ -667,6 +669,9 @@ function _wireReplayControls() {
       replay.finished = false;
       replay.statusEl.textContent = "";
     }
+    // Discrete jump: drop stale bearings so the icon snaps to the new heading.
+    replay.hdgSamples = [];
+    replay.displayHeading = null;
     _replayRender();
   };
 }
@@ -750,7 +755,32 @@ function _replayRender() {
   if (!replay.iconInner && replay.marker.getElement()) {
     replay.iconInner = replay.marker.getElement().querySelector(".ac-inner");
   }
-  if (replay.iconInner) replay.iconInner.style.transform = `rotate(${s.hdg}deg)`;
+
+  // Smooth the heading: rolling average of the last 5 bearings (vector mean,
+  // so it handles the 0/360 wrap), then turn the shortest way, capped at 30°
+  // per frame. displayHeading is kept unwrapped so CSS never spins the long
+  // way across the 0° boundary.
+  replay.hdgSamples.push(s.hdg);
+  if (replay.hdgSamples.length > 5) replay.hdgSamples.shift();
+  let sx = 0, sy = 0;
+  for (const ang of replay.hdgSamples) {
+    const r = (ang * Math.PI) / 180;
+    sx += Math.cos(r);
+    sy += Math.sin(r);
+  }
+  const target = (Math.atan2(sy, sx) * 180 / Math.PI + 360) % 360;
+  if (replay.displayHeading === null || !replay.playing) {
+    // First frame or a paused seek: snap straight to the heading.
+    replay.displayHeading = target;
+  } else {
+    let d = (((target - replay.displayHeading) % 360) + 540) % 360 - 180;
+    if (d > 30) d = 30;
+    else if (d < -30) d = -30;
+    replay.displayHeading += d;
+  }
+  if (replay.iconInner) {
+    replay.iconInner.style.transform = `rotate(${replay.displayHeading}deg)`;
+  }
 
   const flown = replay.latlngs.slice(0, s.segIndex + 1);
   flown.push([s.lat, s.lon]);

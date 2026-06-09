@@ -632,6 +632,11 @@ input[type="color"] { padding: 4px; height: 42px; cursor: pointer; }
 /* ---------- Flight replay ---------- */
 .map-wrap { position: relative; }
 
+/* The class rules below set display:flex, which would otherwise beat the UA
+   [hidden] rule — keep the overlays hidden until replay starts. */
+.replay-bar[hidden],
+.replay-stats[hidden] { display: none !important; }
+
 /* Aircraft marker (custom DivIcon). */
 .aircraft-icon { background: transparent; border: 0; }
 .aircraft-icon .ac-inner {
