@@ -25,13 +25,14 @@ def _haversine_m(lat1, lon1, lat2, lon2) -> float:
 def cluster_airports(flights, radius_m: int = AIRPORT_RADIUS_M) -> list[dict]:
     """Cluster the departure/arrival positions of `flights` into airports.
 
-    Each flight contributes its first and last GPS fix. Fixes within
-    `radius_m` of an existing cluster join it (greedy). Returns one dict per
-    unique airport with a centroid, visit count, first/last visit timestamps
-    and the list of flights that touched it.
+    Each flight contributes its departure (first fix) and landing (last fix).
+    Fixes within `radius_m` of an existing cluster join it (greedy). Returns one
+    dict per unique airport with a centroid, landing/departure counts, the
+    first/last contact timestamps and the list of flights that touched it.
 
-    Shared by the /api/stats airport count and the /api/airports map so the
-    2 km clustering logic lives in exactly one place.
+    Contact time is the flight's start_time for a departure and end_time for a
+    landing. Shared by the /api/stats airport count and the /api/airports map
+    so the 2 km clustering logic lives in exactly one place.
     """
     clusters: list[dict] = []
 
@@ -43,11 +44,14 @@ def cluster_airports(flights, radius_m: int = AIRPORT_RADIUS_M) -> list[dict]:
         if not path:
             continue
 
-        for wp in (path[0], path[-1]):
-            lat, lon = wp[1], wp[2]
-            if lat is None or lon is None:
-                continue
+        endpoints = []
+        dep, arr = path[0], path[-1]
+        if dep[1] is not None and dep[2] is not None:
+            endpoints.append(("dep", dep[1], dep[2], f.start_time))
+        if arr[1] is not None and arr[2] is not None:
+            endpoints.append(("arr", arr[1], arr[2], f.end_time))
 
+        for kind, lat, lon, contact_ts in endpoints:
             target = None
             for c in clusters:
                 if _haversine_m(lat, lon, c["rep"][0], c["rep"][1]) <= radius_m:
@@ -55,14 +59,19 @@ def cluster_airports(flights, radius_m: int = AIRPORT_RADIUS_M) -> list[dict]:
                     break
             if target is None:
                 target = {"rep": (lat, lon), "lat_sum": 0.0, "lon_sum": 0.0,
-                          "n": 0, "flights": {}}
+                          "n": 0, "flights": {}, "dep_ids": set(),
+                          "arr_ids": set(), "contacts": []}
                 clusters.append(target)
 
             target["lat_sum"] += lat
             target["lon_sum"] += lon
             target["n"] += 1
-            # A flight touching an airport twice (e.g. circuits) counts once.
             target["flights"][f.id] = f
+            target["contacts"].append(contact_ts)
+            if kind == "dep":
+                target["dep_ids"].add(f.id)
+            else:
+                target["arr_ids"].add(f.id)
 
     result = []
     for c in clusters:
@@ -70,15 +79,16 @@ def cluster_airports(flights, radius_m: int = AIRPORT_RADIUS_M) -> list[dict]:
         result.append({
             "lat": round(c["lat_sum"] / c["n"], 6),
             "lon": round(c["lon_sum"] / c["n"], 6),
-            "visits": len(fls),
-            "first_visit": fls[0].start_time,
-            "last_visit": fls[-1].start_time,
+            "landings": len(c["arr_ids"]),
+            "departures": len(c["dep_ids"]),
+            "first_contact": min(c["contacts"]),
+            "last_contact": max(c["contacts"]),
             "flights": [
                 {"id": f.id, "date": f.start_time, "duration_s": f.duration_s or 0}
                 for f in fls
             ],
         })
-    result.sort(key=lambda a: a["visits"], reverse=True)
+    result.sort(key=lambda a: a["landings"] + a["departures"], reverse=True)
     return result
 
 

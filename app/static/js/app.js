@@ -952,8 +952,9 @@ async function renderAirports() {
   const latlngs = [];
   data.airports.forEach((ap) => {
     latlngs.push([ap.lat, ap.lon]);
-    // Radius scales with visits: 1 visit small, 5+ visits larger.
-    const radius = 6 + Math.min(Math.max(ap.visits - 1, 0), 5) * 1.4;
+    // Radius scales with how many flights touched the airport.
+    const touches = ap.flights.length;
+    const radius = 6 + Math.min(Math.max(touches - 1, 0), 5) * 1.4;
     const marker = L.circleMarker([ap.lat, ap.lon], {
       radius,
       color: "#ffffff",
@@ -984,8 +985,11 @@ function airportPopupHtml(ap) {
   return `<div class="ap-pop">
     <div class="ap-name">${cached ? U.esc(cached) : "Locating…"}</div>
     <div class="ap-stats">
-      <div><span class="ap-num">${ap.visits}</span> visit${ap.visits === 1 ? "" : "s"}</div>
-      <div class="ap-dates">First ${U.fmtDate(ap.first_visit)} · Last ${U.fmtDate(ap.last_visit)}</div>
+      <div>
+        <span class="ap-num">${ap.landings}</span> landing${ap.landings === 1 ? "" : "s"}
+        · <span class="ap-num">${ap.departures}</span> departure${ap.departures === 1 ? "" : "s"}
+      </div>
+      <div class="ap-dates">First seen ${U.zurichDateKey(ap.first_contact)} · Last seen ${U.zurichDateKey(ap.last_contact)}</div>
     </div>
     <div class="ap-flights">${flights}</div>
   </div>`;
