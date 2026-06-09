@@ -17,6 +17,7 @@
   --tile-bg: rgba(17, 17, 17, 0.6);
   --map-bg: #0a0a0a;
   --backdrop: rgba(8, 8, 8, 0.7);
+  --overlay-bg: rgba(20, 16, 16, 0.82);  /* map overlays (replay) */
 
   /* ---- Borders ---- */
   --border: #2a1515;      /* subtle dark red tint */
@@ -98,6 +99,7 @@ body.light-mode {
   --tile-bg: #ffffff;
   --map-bg: #e8e4df;
   --backdrop: rgba(60, 48, 44, 0.4);
+  --overlay-bg: rgba(255, 255, 255, 0.88);
 
   --border: #e0d4cc;      /* warm light grey */
   --border-soft: #ebe1d9;
@@ -626,6 +628,163 @@ input[type="color"] { padding: 4px; height: 42px; cursor: pointer; }
   z-index: 1;
 }
 .leaflet-container { background: var(--map-bg); }
+
+/* ---------- Flight replay ---------- */
+.map-wrap { position: relative; }
+
+/* Aircraft marker (custom DivIcon). */
+.aircraft-icon { background: transparent; border: 0; }
+.aircraft-icon .ac-inner {
+  width: 26px;
+  height: 26px;
+  transform-origin: center;
+  transition: transform 0.15s linear;
+  will-change: transform;
+}
+.aircraft-icon svg { display: block; width: 26px; height: 26px;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5)); }
+.aircraft-icon svg path { fill: var(--amber); stroke: #fff; stroke-width: 0.7; }
+
+/* Live stats panel (top-right overlay). */
+.replay-stats {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 500;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  background: var(--overlay-bg);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px -10px rgba(0, 0, 0, 0.6);
+}
+.replay-stats .rs-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 120px;
+}
+.replay-stats .rs-l {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  color: var(--text-dim);
+}
+.replay-stats .rs-v {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Controls bar (bottom overlay). */
+.replay-bar {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 600;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--overlay-bg);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+}
+.rp-btn {
+  flex: none;
+  min-width: 38px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.rp-btn:hover {
+  background: rgba(var(--accent-rgb), 0.12);
+  border-color: rgba(var(--accent-rgb), 0.5);
+}
+.rp-time {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.rp-speed {
+  flex: none;
+  width: auto;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.rp-status {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--amber);
+  white-space: nowrap;
+}
+
+/* Scrubber: torii red thumb + progress fill. */
+.rp-scrub {
+  flex: 1 1 auto;
+  min-width: 80px;
+  width: auto;
+  height: 6px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: linear-gradient(
+    to right,
+    var(--amber) 0%,
+    var(--amber) var(--rp-fill, 0%),
+    var(--bg-3) var(--rp-fill, 0%),
+    var(--bg-3) 100%
+  );
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+.rp-scrub:focus { outline: none; box-shadow: none; }
+.rp-scrub::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--amber);
+  border: 2px solid #fff;
+  cursor: pointer;
+}
+.rp-scrub::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--amber);
+  border: 2px solid #fff;
+  cursor: pointer;
+}
+.rp-scrub::-moz-range-track { height: 6px; border-radius: 4px; background: transparent; }
+
+@media (max-width: 560px) {
+  .replay-bar { flex-wrap: wrap; }
+  .rp-scrub { order: 5; flex-basis: 100%; }
+  .replay-stats .rs-item { min-width: 96px; }
+}
 
 .chart-wrap {
   padding: 16px 18px;

@@ -267,12 +267,36 @@ async function renderDetail(id) {
       </div>
       <div class="flex">
         <a class="btn btn-ghost" href="#/flights">‹ Back</a>
+        <button class="btn" id="replay-btn">▶ Replay</button>
         <button class="btn btn-danger" id="del-flight">Delete</button>
       </div>
     </div>
 
     <div class="detail-grid">
-      <div id="map"></div>
+      <div class="map-wrap">
+        <div id="map"></div>
+
+        <div class="replay-stats" id="replay-stats" hidden>
+          <div class="rs-item"><span class="rs-l">ALT</span><span class="rs-v" id="rs-alt">—</span></div>
+          <div class="rs-item"><span class="rs-l">SPD</span><span class="rs-v" id="rs-spd">—</span></div>
+          <div class="rs-item"><span class="rs-l">HDG</span><span class="rs-v" id="rs-hdg">—</span></div>
+          <div class="rs-item"><span class="rs-l">TIME</span><span class="rs-v" id="rs-time">—</span></div>
+        </div>
+
+        <div class="replay-bar" id="replay-bar" hidden>
+          <button class="rp-btn" id="rp-restart" title="Restart" aria-label="Restart">◀◀</button>
+          <button class="rp-btn" id="rp-play" title="Pause" aria-label="Pause">⏸</button>
+          <input type="range" class="rp-scrub" id="rp-scrub" min="0" max="1000" value="0" aria-label="Seek" />
+          <span class="rp-time" id="rp-time">00:00:00 / 00:00:00</span>
+          <select class="rp-speed" id="rp-speed" aria-label="Playback speed">
+            <option value="10">10×</option>
+            <option value="50" selected>50×</option>
+            <option value="100">100×</option>
+            <option value="250">250×</option>
+          </select>
+          <span class="rp-status" id="rp-status"></span>
+        </div>
+      </div>
 
       <div class="stat-grid">
         ${statTile("Duration", U.fmtDuration(f.duration_s), "")}
@@ -320,6 +344,11 @@ async function renderDetail(id) {
     }
   };
 
+  document.getElementById("replay-btn").onclick = () => {
+    if (replay && replay.active) exitReplay();
+    else enterReplay(f);
+  };
+
   drawMap(f);
   drawAltChart(f);
 }
@@ -333,8 +362,12 @@ function statTile(label, value, unit) {
 
 /* ---- Leaflet map with gradient track ---- */
 let mapInstance = null;
+let staticTrackLayer = null;
 function drawMap(f) {
+  // Tear down any replay session before the map is recreated.
+  stopReplay();
   if (mapInstance) { mapInstance.remove(); mapInstance = null; }
+  staticTrackLayer = null;
 
   const path = (f.track || []).filter(
     (p) => p[1] !== null && p[2] !== null
@@ -361,6 +394,9 @@ function drawMap(f) {
     return;
   }
 
+  // Static track grouped so replay mode can hide/restore it in one go.
+  staticTrackLayer = L.layerGroup().addTo(map);
+
   // Gradient: one short polyline per segment, colored green->amber->red.
   const latlngs = path.map((p) => [p[1], p[2]]);
   for (let i = 0; i < latlngs.length - 1; i++) {
@@ -370,7 +406,7 @@ function drawMap(f) {
       weight: 4,
       opacity: 0.95,
       lineCap: "round",
-    }).addTo(map);
+    }).addTo(staticTrackLayer);
   }
 
   // Takeoff / landing markers.
@@ -382,7 +418,7 @@ function drawMap(f) {
       fillColor: color,
       fillOpacity: 1,
     })
-      .addTo(map)
+      .addTo(staticTrackLayer)
       .bindTooltip(label, { permanent: false, direction: "top" });
 
   mk(latlngs[0], "#f4a7b9", "Takeoff");
@@ -475,6 +511,264 @@ function drawAltChart(f) {
       },
     },
   });
+}
+
+/* ============================================================
+   FLIGHT REPLAY
+   ============================================================ */
+let replay = null;
+
+const M_TO_FT = 3.28084;
+const MS_TO_KT = 1.94384;
+
+function _haversineM(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dphi = toRad(lat2 - lat1);
+  const dl = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dphi / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dl / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function _bearing(lat1, lon1, lat2, lon2) {
+  const toRad = (d) => (d * Math.PI) / 180;
+  const y = Math.sin(toRad(lon2 - lon1)) * Math.cos(toRad(lat2));
+  const x =
+    Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+    Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(toRad(lon2 - lon1));
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+function _fmtHMS(s) {
+  s = Math.max(0, Math.round(s));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  return [h, m, ss].map((x) => String(x).padStart(2, "0")).join(":");
+}
+
+const _utcClockFmt = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "UTC", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+});
+
+const AIRCRAFT_SVG =
+  '<svg viewBox="0 0 24 24" width="26" height="26"><path d="M12 2c.7 0 1.2 1 1.2 2.4v4.3l7.3 4.3v1.9l-7.3-2.2v4.2l1.9 1.4v1.4L12 19.2l-3.1 1 .0-1.4 1.9-1.4v-4.2L3.5 15.4v-1.9l7.3-4.3V4.4C10.8 3 11.3 2 12 2z"/></svg>';
+
+function _aircraftIcon() {
+  return L.divIcon({
+    className: "aircraft-icon",
+    html: `<div class="ac-inner">${AIRCRAFT_SVG}</div>`,
+    iconSize: [26, 26],
+    iconAnchor: [13, 13],
+  });
+}
+
+// Stop and fully clean up any running replay (called before the map is rebuilt).
+function stopReplay() {
+  if (!replay) return;
+  if (replay.raf) cancelAnimationFrame(replay.raf);
+  replay = null;
+}
+
+function enterReplay(f) {
+  if (!mapInstance) return;
+  // Build a clean list of timed positions.
+  const pts = (f.track || [])
+    .filter((p) => p[0] != null && p[1] != null && p[2] != null)
+    .map((p) => ({ t: p[0], lat: p[1], lon: p[2], altft: p[3] != null ? p[3] * M_TO_FT : null }));
+
+  if (pts.length < 2) {
+    U.toast("No track available to replay.", "error");
+    return;
+  }
+
+  if (staticTrackLayer) mapInstance.removeLayer(staticTrackLayer);
+
+  const latlngs = pts.map((p) => [p.lat, p.lon]);
+  const ghost = L.polyline(latlngs, {
+    color: cssVar("--text-faint"), weight: 2, opacity: 0.35, lineCap: "round",
+  }).addTo(mapInstance);
+  const flown = L.polyline([], {
+    color: cssVar("--amber"), weight: 4, opacity: 0.95, lineCap: "round",
+  }).addTo(mapInstance);
+  const marker = L.marker(latlngs[0], {
+    icon: _aircraftIcon(), interactive: false, keyboard: false, zIndexOffset: 1000,
+  }).addTo(mapInstance);
+
+  document.getElementById("replay-stats").hidden = false;
+  document.getElementById("replay-bar").hidden = false;
+  document.getElementById("replay-btn").textContent = "✕ Exit Replay";
+
+  const speedSel = document.getElementById("rp-speed");
+
+  replay = {
+    active: true,
+    playing: false,
+    finished: false,
+    points: pts,
+    latlngs,
+    t0: pts[0].t,
+    duration: pts[pts.length - 1].t - pts[0].t,
+    elapsed: 0,
+    speed: Number(speedSel.value) || 50,
+    raf: null,
+    lastNow: 0,
+    ghost,
+    flown,
+    marker,
+    iconInner: marker.getElement() ? marker.getElement().querySelector(".ac-inner") : null,
+    scrub: document.getElementById("rp-scrub"),
+    timeEl: document.getElementById("rp-time"),
+    statusEl: document.getElementById("rp-status"),
+    playBtn: document.getElementById("rp-play"),
+  };
+
+  // The marker element exists after it is added; grab the rotatable inner node.
+  if (!replay.iconInner && marker.getElement()) {
+    replay.iconInner = marker.getElement().querySelector(".ac-inner");
+  }
+
+  _wireReplayControls();
+  _replayPlay();
+}
+
+function exitReplay() {
+  if (!replay) return;
+  if (replay.raf) cancelAnimationFrame(replay.raf);
+  if (mapInstance) {
+    mapInstance.removeLayer(replay.ghost);
+    mapInstance.removeLayer(replay.flown);
+    mapInstance.removeLayer(replay.marker);
+    if (staticTrackLayer) staticTrackLayer.addTo(mapInstance);
+  }
+  document.getElementById("replay-stats").hidden = true;
+  document.getElementById("replay-bar").hidden = true;
+  document.getElementById("replay-btn").textContent = "▶ Replay";
+  replay = null;
+}
+
+function _wireReplayControls() {
+  replay.playBtn.onclick = () =>
+    (replay.playing ? _replayPause() : _replayPlay());
+  document.getElementById("rp-restart").onclick = () => {
+    replay.elapsed = 0;
+    replay.finished = false;
+    _replayPlay();
+  };
+  document.getElementById("rp-speed").onchange = (e) => {
+    replay.speed = Number(e.target.value) || 50;
+  };
+  replay.scrub.oninput = (e) => {
+    const frac = Number(e.target.value) / 1000;
+    replay.elapsed = frac * replay.duration;
+    if (replay.finished && frac < 1) {
+      replay.finished = false;
+      replay.statusEl.textContent = "";
+    }
+    _replayRender();
+  };
+}
+
+function _setPlayBtn(playing) {
+  replay.playBtn.textContent = playing ? "⏸" : "▶";
+  replay.playBtn.title = playing ? "Pause" : "Resume";
+  replay.playBtn.setAttribute("aria-label", playing ? "Pause" : "Resume");
+}
+
+function _replayPlay() {
+  if (!replay) return;
+  if (replay.elapsed >= replay.duration) replay.elapsed = 0; // restart from start
+  replay.finished = false;
+  replay.statusEl.textContent = "";
+  replay.playing = true;
+  replay.lastNow = performance.now();
+  _setPlayBtn(true);
+  replay.raf = requestAnimationFrame(_replayFrame);
+}
+
+function _replayPause() {
+  if (!replay) return;
+  replay.playing = false;
+  if (replay.raf) cancelAnimationFrame(replay.raf);
+  _setPlayBtn(false);
+}
+
+function _replayFinish() {
+  replay.playing = false;
+  if (replay.raf) cancelAnimationFrame(replay.raf);
+  replay.finished = true;
+  _setPlayBtn(false); // shows ▶ — pressing it restarts
+  replay.statusEl.textContent = "Replay finished";
+}
+
+function _replayFrame(now) {
+  if (!replay || !replay.playing) return;
+  const dtWall = (now - replay.lastNow) / 1000;
+  replay.lastNow = now;
+  replay.elapsed += dtWall * replay.speed;
+
+  if (replay.elapsed >= replay.duration) {
+    replay.elapsed = replay.duration;
+    _replayRender();
+    _replayFinish();
+    return;
+  }
+  _replayRender();
+  replay.raf = requestAnimationFrame(_replayFrame);
+}
+
+function _replaySample(clock) {
+  const pts = replay.points;
+  const last = pts.length - 1;
+  let i = 0;
+  if (clock <= pts[0].t) i = 0;
+  else if (clock >= pts[last].t) i = last - 1;
+  else { while (i < last && pts[i + 1].t <= clock) i++; }
+
+  const a = pts[i];
+  const b = pts[i + 1];
+  const span = (b.t - a.t) || 1;
+  const frac = Math.min(1, Math.max(0, (clock - a.t) / span));
+
+  const lat = a.lat + (b.lat - a.lat) * frac;
+  const lon = a.lon + (b.lon - a.lon) * frac;
+  let altft = null;
+  if (a.altft != null && b.altft != null) altft = a.altft + (b.altft - a.altft) * frac;
+  else altft = a.altft != null ? a.altft : b.altft;
+  const hdg = _bearing(a.lat, a.lon, b.lat, b.lon);
+  const distM = _haversineM(a.lat, a.lon, b.lat, b.lon);
+  const spdkt = (distM / span) * MS_TO_KT;
+  return { lat, lon, altft, hdg, spdkt, segIndex: i };
+}
+
+function _replayRender() {
+  const s = _replaySample(replay.t0 + replay.elapsed);
+
+  replay.marker.setLatLng([s.lat, s.lon]);
+  if (!replay.iconInner && replay.marker.getElement()) {
+    replay.iconInner = replay.marker.getElement().querySelector(".ac-inner");
+  }
+  if (replay.iconInner) replay.iconInner.style.transform = `rotate(${s.hdg}deg)`;
+
+  const flown = replay.latlngs.slice(0, s.segIndex + 1);
+  flown.push([s.lat, s.lon]);
+  replay.flown.setLatLngs(flown);
+
+  // Live stats panel.
+  document.getElementById("rs-alt").textContent =
+    s.altft != null ? `${U.num(Math.round(s.altft))} ft` : "—";
+  document.getElementById("rs-spd").textContent = `${U.num(Math.round(s.spdkt))} kt`;
+  document.getElementById("rs-hdg").textContent = `${String(Math.round(s.hdg)).padStart(3, "0")}°`;
+  document.getElementById("rs-time").textContent =
+    _utcClockFmt.format(new Date((replay.t0 + replay.elapsed) * 1000));
+
+  // Progress bar + elapsed display.
+  const frac = replay.duration ? replay.elapsed / replay.duration : 0;
+  replay.scrub.value = Math.round(frac * 1000);
+  replay.scrub.style.setProperty("--rp-fill", `${frac * 100}%`);
+  replay.timeEl.textContent = `${_fmtHMS(replay.elapsed)} / ${_fmtHMS(replay.duration)}`;
 }
 
 /* ============================================================
