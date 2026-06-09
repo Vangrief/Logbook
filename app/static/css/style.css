@@ -731,6 +731,108 @@ input[type="color"] { padding: 4px; height: 42px; cursor: pointer; }
 .toast.error { border-color: rgba(var(--accent-rgb), 0.5); }
 .toast.success { border-color: rgba(var(--green-rgb), 0.5); }
 
+/* ---------- Statistics dashboard ---------- */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 14px;
+  margin-bottom: 26px;
+}
+.kpi { padding: 18px; }
+.kpi .value {
+  font-family: var(--mono);
+  font-size: 30px;
+  font-weight: 600;
+  color: var(--amber);
+  letter-spacing: 0.5px;
+  line-height: 1.1;
+}
+.kpi .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.9px;
+  color: var(--text-dim);
+  margin-top: 8px;
+}
+.kpi-sub {
+  font-family: var(--mono);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.stats-h {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  font-weight: 600;
+  margin: 8px 0 14px;
+}
+
+.records-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+  margin-bottom: 26px;
+}
+.record { padding: 16px 18px; }
+.record .r-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+.record .r-value {
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+}
+.record .r-date {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-soft);
+  margin-top: 4px;
+}
+.record.clickable {
+  cursor: pointer;
+  transition: transform 0.12s, border-color 0.15s, box-shadow 0.15s;
+}
+.record.clickable:hover {
+  transform: translateY(-1px);
+  border-color: var(--border-hover);
+  box-shadow: var(--row-shadow), 0 0 16px -6px rgba(var(--accent-rgb), 0.35);
+}
+
+.stats-charts {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 26px;
+}
+
+.stats-table { width: 100%; border-collapse: collapse; }
+.stats-table th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-strong);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.stats-table td {
+  padding: 10px;
+  border-bottom: 1px solid var(--border-soft);
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+}
+.stats-table tr:last-child td { border-bottom: none; }
+.stats-table td:first-child { color: var(--reg-text); }
+
 /* ---------- Login ---------- */
 .login-wrap {
   min-height: 100vh;

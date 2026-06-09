@@ -11,6 +11,7 @@ const routes = [
   { re: /^#\/flights\/(\d+)$/, handler: (m) => renderDetail(Number(m[1])) },
   { re: /^#\/flights$/, handler: renderFlights },
   { re: /^#\/new$/, handler: renderNew },
+  { re: /^#\/stats$/, handler: renderStats },
   { re: /^#\/settings$/, handler: renderSettings },
 ];
 
@@ -27,6 +28,8 @@ function router() {
 function setActiveNav(hash) {
   const key = hash.startsWith("#/new")
     ? "new"
+    : hash.startsWith("#/stats")
+    ? "stats"
     : hash.startsWith("#/settings")
     ? "settings"
     : "flights";
@@ -669,6 +672,196 @@ async function addDiscoveredFlight(btn, aircraftId, firstSeen) {
 }
 
 /* ============================================================
+   STATISTICS
+   ============================================================ */
+let statsCharts = [];
+function destroyStatsCharts() {
+  statsCharts.forEach((c) => c.destroy());
+  statsCharts = [];
+}
+
+// Read a CSS custom property from the active theme (light/dark aware).
+function cssVar(name) {
+  return getComputedStyle(document.body).getPropertyValue(name).trim();
+}
+
+async function renderStats() {
+  destroyStatsCharts();
+  loading("Loading statistics");
+
+  let s;
+  try {
+    s = await API.getStats();
+  } catch (e) {
+    view.innerHTML = errorBox(e.message);
+    return;
+  }
+
+  const kpi = (val, label, sub = "") => `
+    <div class="card kpi">
+      <div class="value">${val}</div>
+      <div class="label">${U.esc(label)}</div>
+      ${sub ? `<div class="kpi-sub muted">${U.esc(sub)}</div>` : ""}
+    </div>`;
+
+  const t = s.totals;
+  const kpis = [
+    kpi(U.num(t.flights), "Total Flights"),
+    kpi(U.fmtDuration(t.time_s), "Total Flight Time"),
+    kpi(U.num(t.distance_km, 1), "Total Distance (km)"),
+    kpi(U.num(t.airports), "Airports Visited"),
+  ].join("");
+
+  const record = (r, label, fmt) => {
+    if (!r) {
+      return `<div class="card record">
+        <div class="r-label">${label}</div>
+        <div class="r-value">—</div>
+        <div class="r-date muted">No data</div>
+      </div>`;
+    }
+    return `<div class="card record clickable" data-flight="${r.flight_id}">
+      <div class="r-label">${label}</div>
+      <div class="r-value">${fmt(r.value)}</div>
+      <div class="r-date">${U.fmtDate(r.date)}</div>
+    </div>`;
+  };
+
+  const recs = [
+    record(s.records.longest, "Longest Flight", (v) => U.fmtDuration(v)),
+    record(s.records.furthest, "Furthest Flight", (v) => `${U.num(v, 1)} km`),
+    record(s.records.highest, "Highest Altitude", (v) => `${U.num(v)} ft`),
+    record(s.records.fastest, "Fastest Speed", (v) => `${U.num(v)} kt`),
+  ].join("");
+
+  const a = s.activity;
+  const activity = [
+    kpi(`${a.current_streak}`, a.current_streak === 1 ? "Current Streak (day)" : "Current Streak (days)"),
+    kpi(`${a.longest_streak}`, a.longest_streak === 1 ? "Longest Streak (day)" : "Longest Streak (days)"),
+    kpi(a.busiest_day ? U.num(a.busiest_day.count) : "—", "Busiest Day", a.busiest_day ? a.busiest_day.date : ""),
+    kpi(U.fmtDuration(a.avg_duration_s), "Avg Flight Duration"),
+    kpi(U.num(a.avg_flights_per_week, 1), "Avg Flights / Week"),
+  ].join("");
+
+  view.innerHTML = `
+    <div class="page-head"><h1>Statistics</h1></div>
+
+    <div class="kpi-grid">${kpis}</div>
+
+    <h2 class="stats-h">Personal Records</h2>
+    <div class="records-grid">${recs}</div>
+
+    <h2 class="stats-h">Trends · last 12 months</h2>
+    <div class="stats-charts">
+      <div class="card chart-wrap"><h3>Flights per Month</h3><canvas id="ch-flights"></canvas></div>
+      <div class="card chart-wrap"><h3>Flight Time per Month</h3><canvas id="ch-time"></canvas></div>
+      <div class="card chart-wrap"><h3>Distance per Month</h3><canvas id="ch-dist"></canvas></div>
+    </div>
+
+    <h2 class="stats-h">Activity</h2>
+    <div class="kpi-grid">${activity}</div>
+
+    ${perAircraftSection(s.per_aircraft)}
+  `;
+
+  view.querySelectorAll(".record.clickable").forEach((c) => {
+    c.onclick = () => { window.location.hash = `#/flights/${c.dataset.flight}`; };
+  });
+
+  const mo = s.monthly;
+  drawBarChart("ch-flights", mo.labels, mo.flights, (v) => `${v} flight${v === 1 ? "" : "s"}`);
+  drawBarChart("ch-time", mo.labels, mo.time_s.map((x) => x / 3600),
+    (v) => U.fmtDuration(Math.round(v * 3600)));
+  drawBarChart("ch-dist", mo.labels, mo.distance_km, (v) => `${U.num(v, 1)} km`);
+}
+
+function perAircraftSection(list) {
+  if (!list || list.length <= 1) return "";
+  const rows = list
+    .map(
+      (r) => `<tr>
+        <td>${U.esc(r.registration)}${r.nickname ? " · " + U.esc(r.nickname) : ""}</td>
+        <td>${U.num(r.flights)}</td>
+        <td>${U.fmtDuration(r.time_s)}</td>
+        <td>${U.num(r.distance_km, 1)}</td>
+        <td>${U.fmtDuration(r.avg_duration_s)}</td>
+      </tr>`
+    )
+    .join("");
+  return `
+    <h2 class="stats-h">Per Aircraft</h2>
+    <div class="card panel">
+      <div style="overflow-x:auto">
+        <table class="stats-table">
+          <thead><tr>
+            <th>Aircraft</th><th>Flights</th><th>Total Time</th>
+            <th>Distance (km)</th><th>Avg Duration</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// Bar chart matching the altitude profile chart's theme handling.
+function drawBarChart(canvasId, labels, data, valueFmt) {
+  const accent = cssVar("--amber");
+  const accentRgb = cssVar("--accent-rgb");
+  const cText = cssVar("--text");
+  const cDim = cssVar("--text-dim");
+  const cFaint = cssVar("--text-faint");
+  const cPanel = cssVar("--bg-2");
+  const cBorder = cssVar("--border");
+  const cGrid = cssVar("--chart-grid");
+
+  const ctx = document.getElementById(canvasId).getContext("2d");
+  const chart = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        {
+          data,
+          backgroundColor: `rgba(${accentRgb}, 0.65)`,
+          hoverBackgroundColor: accent,
+          borderRadius: 4,
+          maxBarThickness: 46,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: cPanel,
+          borderColor: cBorder,
+          borderWidth: 1,
+          titleColor: cDim,
+          bodyColor: cText,
+          bodyFont: { family: "JetBrains Mono" },
+          callbacks: { label: (item) => valueFmt(item.parsed.y) },
+        },
+      },
+      scales: {
+        x: {
+          ticks: { color: cFaint, font: { family: "JetBrains Mono", size: 10 } },
+          grid: { display: false },
+        },
+        y: {
+          beginAtZero: true,
+          ticks: { color: cFaint, font: { family: "JetBrains Mono", size: 10 }, precision: 0 },
+          grid: { color: cGrid },
+        },
+      },
+    },
+  });
+  statsCharts.push(chart);
+}
+
+/* ============================================================
    SETTINGS
    ============================================================ */
 async function renderSettings() {
@@ -928,9 +1121,10 @@ function toggleTheme() {
   const next = document.body.classList.contains("light-mode") ? "dark" : "light";
   localStorage.setItem("theme", next);
   applyTheme(next);
-  // The map tiles and chart are canvas/Leaflet and read the theme at draw
-  // time, so rebuild the detail view to pick up the new palette.
-  if (/^#\/flights\/\d+$/.test(window.location.hash)) router();
+  // Canvas/Leaflet content reads the theme at draw time, so rebuild views
+  // that contain a map or charts to pick up the new palette.
+  const hash = window.location.hash;
+  if (/^#\/flights\/\d+$/.test(hash) || hash === "#/stats") router();
 }
 
 /* ---------------- Boot ---------------- */

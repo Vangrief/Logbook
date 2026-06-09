@@ -63,6 +63,9 @@ const API = (() => {
     getSettings: () => request("GET", "/api/settings"),
     updateSettings: (s) => request("PUT", "/api/settings", s),
 
+    // Stats
+    getStats: () => request("GET", "/api/stats"),
+
     // Auth — logout uses a plain fetch so it is never caught by the 401
     // intercept above (which would otherwise risk a redirect loop).
     logout: () => fetch("/api/logout", { method: "POST" }),
