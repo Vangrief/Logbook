@@ -22,7 +22,7 @@ def get_settings(db: Session = Depends(get_db)):
 @router.put("", response_model=SettingsOut)
 def update_settings(payload: SettingsUpdate, db: Session = Depends(get_db)):
     if payload.app_title is not None:
-        set_value(db, "app_title", payload.app_title.strip() or "Flight Archive")
+        set_value(db, "app_title", payload.app_title.strip() or "Logbook")
     if payload.pilot_name is not None:
         set_value(db, "pilot_name", payload.pilot_name.strip())
     if payload.opensky_client_id is not None:

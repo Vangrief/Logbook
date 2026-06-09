@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from .models import Setting
 
 DEFAULTS = {
-    "app_title": "Flight Archive",
+    "app_title": "Logbook",
     "pilot_name": "",
     "opensky_client_id": "",
     "opensky_client_secret": "",

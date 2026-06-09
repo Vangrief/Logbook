@@ -6,8 +6,8 @@ services:
     container_name: flightarchive
     restart: unless-stopped
     ports:
-      # Host 8080 -> container 8080. Reachable at http://10.0.10.90:8080
-      - "8080:8080"
+      # Host 7323 -> container 7323. Reachable at http://10.0.10.90:7323
+      - "7323:7323"
     environment:
       - DATABASE_PATH=/data/flightarchive.db
       # Optional bootstrap of OpenSky credentials via .env (otherwise set them

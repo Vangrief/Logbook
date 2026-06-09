@@ -1,4 +1,4 @@
-# Flight Archive
+# Logbook
 
 A self-hosted flight logbook that pulls real GPS tracks from the
 [OpenSky Network](https://opensky-network.org/) and archives them locally with
@@ -38,7 +38,7 @@ an interactive map, altitude profile, and pilot notes. Built for a homelab
    ```bash
    docker compose up -d --build
    ```
-4. Open **http://10.0.10.90:8080**
+4. Open **http://10.0.10.90:7323**
 
 The SQLite database is persisted to `/mnt/user/appdata/flightarchive` on the
 Unraid host.
@@ -72,11 +72,11 @@ python -m venv .venv
 # Windows:  .venv\Scripts\activate
 # Linux/Mac: source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8080
+uvicorn app.main:app --reload --port 7323
 ```
 
 The database falls back to `./flightarchive.db` when `/data` isn't mounted.
-Visit <http://localhost:8080>.
+Visit <http://localhost:7323>.
 
 ---
 

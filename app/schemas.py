@@ -77,7 +77,7 @@ class FlightDetail(FlightSummary):
 # Settings
 # ---------------------------------------------------------------------------
 class SettingsOut(BaseModel):
-    app_title: str = "Flight Archive"
+    app_title: str = "Logbook"
     pilot_name: str = ""
     opensky_client_id: str = ""
     # Never return the actual secret; only whether one is configured.

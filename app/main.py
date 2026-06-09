@@ -1,4 +1,4 @@
-"""FastAPI application entry point for the Flight Archive."""
+"""FastAPI application entry point for Logbook."""
 import os
 
 from fastapi import FastAPI
@@ -11,7 +11,7 @@ from .seed import seed
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
-app = FastAPI(title="Flight Archive", version="1.0.0")
+app = FastAPI(title="Logbook", version="1.0.0")
 
 
 @app.on_event("startup")

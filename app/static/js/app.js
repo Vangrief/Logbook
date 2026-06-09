@@ -1,5 +1,5 @@
 /* ============================================================
-   Flight Archive — SPA router + views (vanilla JS)
+   Logbook — SPA router + views (vanilla JS)
    ============================================================ */
 const view = document.getElementById("view");
 
@@ -41,8 +41,8 @@ window.addEventListener("hashchange", router);
 async function loadBranding() {
   try {
     const s = await API.getSettings();
-    document.getElementById("brand-title").textContent = s.app_title || "Flight Archive";
-    document.title = s.app_title || "Flight Archive";
+    document.getElementById("brand-title").textContent = s.app_title || "Logbook";
+    document.title = s.app_title || "Logbook";
     document.getElementById("pilot-name").textContent = s.pilot_name
       ? `PIC · ${s.pilot_name}`
       : "";
