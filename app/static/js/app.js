@@ -219,7 +219,7 @@ function flightRow(f) {
       </div>
       <div class="meta">
         <div class="date">${U.fmtDate(f.start_time)} · ${U.fmtTime(f.start_time)}–${U.fmtTime(f.end_time)}
-          ${f.callsign ? `· ${U.esc(f.callsign)}` : ""}</div>
+          ${f.callsign ? `· <span class="cs">${U.esc(f.callsign)}</span>` : ""}</div>
         <div class="notes">${notes}</div>
         <div class="model">${U.esc(f.aircraft_model || "")}</div>
       </div>
