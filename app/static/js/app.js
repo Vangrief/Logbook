@@ -920,7 +920,7 @@ function initLogout() {
     } catch (_) {
       /* ignore — redirect regardless */
     }
-    window.location.href = "/";
+    window.location.href = "/login";
   };
 }
 

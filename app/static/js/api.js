@@ -8,9 +8,12 @@ const API = (() => {
     }
     const res = await fetch(path, opts);
 
-    // Session expired or missing — drop back to the login page.
+    // Session expired or missing — drop back to the login page. Guard against
+    // a redirect loop: never bounce when we're already on the login page.
     if (res.status === 401) {
-      window.location.href = "/";
+      if (window.location.pathname !== "/login") {
+        window.location.href = "/login";
+      }
       throw new Error("Authentication required");
     }
     if (res.status === 204) return null;
@@ -60,7 +63,8 @@ const API = (() => {
     getSettings: () => request("GET", "/api/settings"),
     updateSettings: (s) => request("PUT", "/api/settings", s),
 
-    // Auth
-    logout: () => request("POST", "/api/logout"),
+    // Auth — logout uses a plain fetch so it is never caught by the 401
+    // intercept above (which would otherwise risk a redirect loop).
+    logout: () => fetch("/api/logout", { method: "POST" }),
   };
 })();
