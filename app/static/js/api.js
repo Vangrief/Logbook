@@ -39,6 +39,12 @@ const API = (() => {
       ).toString();
       return request("GET", `/api/flights${qs ? "?" + qs : ""}`);
     },
+    discoverFlights: ({ aircraft_id, time, window }) => {
+      const params = { aircraft_id, time };
+      if (window) params.window = window;
+      const qs = new URLSearchParams(params).toString();
+      return request("GET", `/api/flights/discover?${qs}`);
+    },
     createFlight: (f) => request("POST", "/api/flights", f),
     getFlight: (id) => request("GET", `/api/flights/${id}`),
     updateNotes: (id, notes) => request("PUT", `/api/flights/${id}/notes`, { notes }),

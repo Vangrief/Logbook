@@ -134,3 +134,57 @@ async def fetch_track(
             "OpenSky returned an empty track for that aircraft and time.", 404
         )
     return data
+
+
+async def fetch_flights(
+    icao24: str, begin: int, end: int, client_id: str, client_secret: str
+) -> list[dict]:
+    """List all flights of `icao24` between `begin` and `end` (unix seconds).
+
+    Uses OpenSky's /flights/aircraft endpoint. A 404 / empty body means there
+    are simply no flights in that window, which is returned as an empty list
+    (not an error) so the UI can show a friendly "no flights" message.
+    """
+    icao24 = icao24.strip().lower()
+
+    if not client_id or not client_secret:
+        raise OpenSkyError(
+            "OpenSky API credentials are not configured. Add them in Settings.",
+            400,
+        )
+
+    async def _do_request(token: str) -> httpx.Response:
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            return await client.get(
+                f"{API_BASE}/flights/aircraft",
+                params={"icao24": icao24, "begin": begin, "end": end},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    token = await _get_token(client_id, client_secret)
+    try:
+        resp = await _do_request(token)
+        if resp.status_code == 401:
+            # Token may be stale — refresh once and retry.
+            token = await _get_token(client_id, client_secret, force=True)
+            resp = await _do_request(token)
+    except httpx.RequestError as exc:
+        raise OpenSkyError(f"Could not reach OpenSky API: {exc}") from exc
+
+    if resp.status_code == 401:
+        raise OpenSkyError("OpenSky authentication failed (401).", 401)
+    if resp.status_code == 429:
+        raise OpenSkyError(
+            "OpenSky rate limit reached (429). Please wait and try again.", 429
+        )
+    # 404 / empty simply means no flights in the requested window.
+    if resp.status_code == 404:
+        return []
+    if resp.status_code != 200:
+        raise OpenSkyError(f"OpenSky API error ({resp.status_code}).", 502)
+
+    if not resp.text or not resp.text.strip():
+        return []
+
+    data = resp.json()
+    return data or []

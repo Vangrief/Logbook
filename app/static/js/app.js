@@ -443,8 +443,9 @@ async function renderNew() {
 
     <div class="card panel" style="max-width:640px">
       <p class="muted" style="margin-top:0">
-        Enter the aircraft and a time <strong>during</strong> the flight. OpenSky
-        resolves the full track automatically — no need for exact start/end times.
+        Pick the aircraft and a time <strong>during</strong> the flight, then choose
+        the exact flight from the results below. OpenSky resolves the full track
+        automatically — no need for precise start/end times.
       </p>
 
       <label class="field">
@@ -471,43 +472,130 @@ async function renderNew() {
 
       <div class="flex flex-end row-gap">
         <a class="btn btn-ghost" href="#/flights">Cancel</a>
-        <button class="btn btn-primary" id="n-submit">Fetch &amp; Save Flight</button>
+        <button class="btn btn-primary" id="n-find">🔍 Find Flights</button>
       </div>
     </div>
+
+    <div id="discovery" class="row-gap"></div>
   `;
 
-  document.getElementById("n-submit").onclick = submitNewFlight;
+  // Re-run discovery whenever the aircraft/date/time changes, and on demand.
+  const trigger = () => runDiscovery();
+  document.getElementById("n-aircraft").onchange = trigger;
+  document.getElementById("n-date").onchange = trigger;
+  document.getElementById("n-time").onchange = trigger;
+  document.getElementById("n-find").onclick = trigger;
 }
 
-async function submitNewFlight() {
-  const btn = document.getElementById("n-submit");
-  const aircraftId = Number(document.getElementById("n-aircraft").value);
+// Parse the form's UTC date+time into a unix timestamp, or null if incomplete.
+function newFormTimestamp() {
   const date = document.getElementById("n-date").value;
   const time = document.getElementById("n-time").value;
-  const notes = document.getElementById("n-notes").value;
-
-  if (!aircraftId || !date || !time) {
-    U.toast("Aircraft, date and time are required.", "error");
-    return;
-  }
-
-  // Interpret the entered date/time as UTC.
+  if (!date || !time) return null;
   const ts = Math.floor(Date.parse(`${date}T${time}:00Z`) / 1000);
-  if (Number.isNaN(ts)) {
-    U.toast("Invalid date or time.", "error");
+  return Number.isNaN(ts) ? null : ts;
+}
+
+async function runDiscovery() {
+  const box = document.getElementById("discovery");
+  if (!box) return;
+
+  const aircraftId = Number(document.getElementById("n-aircraft").value);
+  const ts = newFormTimestamp();
+  if (!aircraftId || ts === null) {
+    box.innerHTML = "";
     return;
   }
 
-  btn.disabled = true;
-  const original = btn.innerHTML;
-  btn.innerHTML = `<span class="spinner"></span> Querying OpenSky…`;
+  box.innerHTML = `<div class="card panel"><div class="empty" style="padding:36px">
+    <span class="spinner"></span>
+    <div style="margin-top:12px">Searching OpenSky for flights ±6 h…</div>
+  </div></div>`;
+
   try {
-    const flight = await API.createFlight({ aircraft_id: aircraftId, time: ts, notes });
+    const flights = await API.discoverFlights({ aircraft_id: aircraftId, time: ts });
+    drawDiscovery(flights, ts, aircraftId);
+  } catch (e) {
+    box.innerHTML = `<div class="card panel"><div class="empty" style="padding:36px">
+      <div class="big">⚠</div><div>${U.esc(e.message)}</div>
+    </div></div>`;
+  }
+}
+
+function drawDiscovery(flights, ts, aircraftId) {
+  const box = document.getElementById("discovery");
+
+  if (!flights.length) {
+    box.innerHTML = `<div class="card panel"><div class="empty" style="padding:40px">
+      <div class="big">🔍</div>
+      <div>No flights found in this window.</div>
+      <div class="muted" style="margin-top:8px;max-width:430px;margin-left:auto;margin-right:auto">
+        OpenSky has no flights for this aircraft within ±6 h of the time you entered.
+        Try a different time and make sure it falls while the aircraft was airborne.
+      </div>
+    </div></div>`;
+    return;
+  }
+
+  const zoneCell = (t) =>
+    `${U.fmtZoned(t, "UTC", true)}<span class="z">UTC</span>` +
+    `<div class="zrh">${U.fmtZoned(t, "Europe/Zurich")}<span class="z">ZRH</span></div>`;
+
+  const rows = flights
+    .map((fl) => {
+      const match = ts >= fl.first_seen && ts <= fl.last_seen;
+      const action = fl.already_logged
+        ? `<button class="btn btn-sm btn-ghost" disabled>Already logged</button>`
+        : `<button class="btn btn-sm btn-primary" data-add="${fl.first_seen}">Add</button>`;
+      return `<tr class="${match ? "row-match" : ""}">
+        <td>${zoneCell(fl.first_seen)}${match ? `<span class="match-tag">your time</span>` : ""}</td>
+        <td>${zoneCell(fl.last_seen)}</td>
+        <td>${U.fmtDuration(fl.duration_s)}</td>
+        <td>${fl.callsign ? U.esc(fl.callsign) : "—"}</td>
+        <td style="text-align:right;white-space:nowrap">${action}</td>
+      </tr>`;
+    })
+    .join("");
+
+  box.innerHTML = `<div class="card panel">
+    <h3 class="section-title">Flights Found
+      <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">
+        · ${flights.length} in ±6 h · Add archives the flight with your notes</span>
+    </h3>
+    <div style="overflow-x:auto">
+      <table class="disc-table">
+        <thead><tr>
+          <th>Departure</th><th>Arrival</th><th>Duration</th><th>Callsign</th><th></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </div>`;
+
+  box.querySelectorAll("[data-add]").forEach((btn) => {
+    btn.onclick = () => addDiscoveredFlight(btn, aircraftId, Number(btn.dataset.add));
+  });
+}
+
+async function addDiscoveredFlight(btn, aircraftId, firstSeen) {
+  const notes = document.getElementById("n-notes").value;
+  const addButtons = document.querySelectorAll("#discovery [data-add]");
+  addButtons.forEach((b) => (b.disabled = true));
+  const original = btn.innerHTML;
+  btn.innerHTML = `<span class="spinner"></span> Fetching…`;
+
+  try {
+    // Use the departure timestamp so /tracks/all resolves this exact flight.
+    const flight = await API.createFlight({
+      aircraft_id: aircraftId,
+      time: firstSeen,
+      notes,
+    });
     U.toast("Flight archived", "success");
     window.location.hash = `#/flights/${flight.id}`;
   } catch (e) {
     U.toast(e.message, "error");
-    btn.disabled = false;
+    addButtons.forEach((b) => (b.disabled = false));
     btn.innerHTML = original;
   }
 }
@@ -714,6 +802,27 @@ function errorBox(msg) {
   </div>`;
 }
 
+/* ---------------- Navbar clock (UTC + Zurich) ---------------- */
+function startClock() {
+  const utcEl = document.getElementById("clk-utc");
+  const zrhEl = document.getElementById("clk-zrh");
+  if (!utcEl || !zrhEl) return;
+
+  const timeOpts = { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false };
+  // Intl handles the CET/CEST switchover for Europe/Zurich automatically.
+  const utcFmt = new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", ...timeOpts });
+  const zrhFmt = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Zurich", ...timeOpts });
+
+  const tick = () => {
+    const now = new Date();
+    utcEl.textContent = utcFmt.format(now);
+    zrhEl.textContent = zrhFmt.format(now);
+  };
+  tick();
+  setInterval(tick, 1000);
+}
+
 /* ---------------- Boot ---------------- */
 loadBranding();
+startClock();
 router();

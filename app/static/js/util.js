@@ -17,6 +17,18 @@ const U = (() => {
     return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
+  // Format a unix timestamp in a specific IANA time zone (24h).
+  // withDate => "YYYY-MM-DD HH:MM", otherwise "HH:MM".
+  function fmtZoned(ts, tz, withDate = false) {
+    const d = new Date(ts * 1000);
+    const opts = withDate
+      ? { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+          hour: "2-digit", minute: "2-digit", hour12: false }
+      : { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false };
+    // en-CA yields ISO-style "2026-06-09, 11:20"; drop the comma.
+    return new Intl.DateTimeFormat("en-CA", opts).format(d).replace(", ", " ");
+  }
+
   function fmtDuration(seconds) {
     const h = Math.floor(seconds / 3600);
     const m = Math.round((seconds % 3600) / 60);
@@ -73,7 +85,7 @@ const U = (() => {
   }
 
   return {
-    fmtDate, fmtDateTime, fmtTime, fmtDuration, num, esc,
+    fmtDate, fmtDateTime, fmtTime, fmtZoned, fmtDuration, num, esc,
     gradientColor, toast, html,
   };
 })();

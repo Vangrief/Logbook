@@ -44,6 +44,21 @@ class FlightNotesUpdate(BaseModel):
     notes: str
 
 
+class DiscoveredFlight(BaseModel):
+    """A flight returned by OpenSky's /flights/aircraft discovery query."""
+
+    icao24: str
+    first_seen: int
+    last_seen: int
+    duration_s: int
+    callsign: str | None = None
+    est_departure_airport: str | None = None
+    est_arrival_airport: str | None = None
+    # Whether this flight is already stored locally, and its id if so.
+    already_logged: bool = False
+    logged_flight_id: int | None = None
+
+
 class FlightSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

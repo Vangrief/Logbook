@@ -9,11 +9,17 @@ from .. import opensky, stats
 from ..database import get_db
 from ..models import Aircraft, Flight
 from ..schemas import (
+    DiscoveredFlight,
     FlightCreate,
     FlightDetail,
     FlightNotesUpdate,
     FlightSummary,
 )
+
+# ±6 hour default search window for flight discovery.
+DISCOVERY_WINDOW_S = 6 * 3600
+# Tolerance when matching a discovered flight to an already-saved one.
+MATCH_TOLERANCE_S = 600
 from ..settings_store import get_credentials
 
 router = APIRouter(prefix="/api/flights", tags=["flights"])
@@ -52,6 +58,69 @@ def list_flights(
     stmt = stmt.order_by(column.asc() if order == "asc" else column.desc())
 
     return [_to_summary(f) for f in db.scalars(stmt)]
+
+
+@router.get("/discover", response_model=list[DiscoveredFlight])
+async def discover_flights(
+    aircraft_id: int = Query(...),
+    time: int = Query(..., description="Unix seconds sometime during the flight"),
+    window: int = Query(default=DISCOVERY_WINDOW_S, ge=0, le=30 * 24 * 3600),
+    db: Session = Depends(get_db),
+):
+    """Find candidate flights for an aircraft within ±`window` of `time`.
+
+    Returns OpenSky's flight list (departure/arrival, callsign, duration) and
+    flags any that are already stored locally.
+    """
+    aircraft = db.get(Aircraft, aircraft_id)
+    if aircraft is None:
+        raise HTTPException(status_code=404, detail="Aircraft not found")
+    if not aircraft.icao24:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Aircraft {aircraft.registration} has no ICAO24 hex set. "
+            "Add it in Settings.",
+        )
+
+    client_id, client_secret = get_credentials(db)
+    try:
+        raw_flights = await opensky.fetch_flights(
+            aircraft.icao24, time - window, time + window, client_id, client_secret
+        )
+    except opensky.OpenSkyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+    existing = list(
+        db.scalars(select(Flight).where(Flight.aircraft_id == aircraft_id))
+    )
+
+    results: list[DiscoveredFlight] = []
+    for fl in raw_flights:
+        first = int(fl.get("firstSeen") or 0)
+        last = int(fl.get("lastSeen") or 0)
+
+        logged_id = None
+        for ex in existing:
+            if abs(ex.start_time - first) <= MATCH_TOLERANCE_S:
+                logged_id = ex.id
+                break
+
+        results.append(
+            DiscoveredFlight(
+                icao24=(fl.get("icao24") or aircraft.icao24),
+                first_seen=first,
+                last_seen=last,
+                duration_s=max(0, last - first),
+                callsign=(fl.get("callsign") or "").strip() or None,
+                est_departure_airport=fl.get("estDepartureAirport"),
+                est_arrival_airport=fl.get("estArrivalAirport"),
+                already_logged=logged_id is not None,
+                logged_flight_id=logged_id,
+            )
+        )
+
+    results.sort(key=lambda r: r.first_seen)
+    return results
 
 
 @router.post("", response_model=FlightDetail, status_code=201)
