@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Flight Archive</title>
+
+  <!-- Fonts: Inter for UI, JetBrains Mono for data -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
+    rel="stylesheet"
+  />
+
+  <!-- Leaflet -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+
+  <!-- Chart.js for the altitude profile -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">✈</span>
+      <span class="brand-title" id="brand-title">Flight Archive</span>
+    </div>
+    <nav class="nav">
+      <a href="#/flights" data-nav="flights">Flights</a>
+      <a href="#/new" data-nav="new">Log Flight</a>
+      <a href="#/settings" data-nav="settings">Settings</a>
+    </nav>
+    <div class="pilot" id="pilot-name"></div>
+  </header>
+
+  <main id="view"></main>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="/static/js/api.js"></script>
+  <script src="/static/js/util.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
