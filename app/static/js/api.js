@@ -7,6 +7,12 @@ const API = (() => {
       opts.body = JSON.stringify(body);
     }
     const res = await fetch(path, opts);
+
+    // Session expired or missing — drop back to the login page.
+    if (res.status === 401) {
+      window.location.href = "/";
+      throw new Error("Authentication required");
+    }
     if (res.status === 204) return null;
 
     let data = null;
@@ -53,5 +59,8 @@ const API = (() => {
     // Settings
     getSettings: () => request("GET", "/api/settings"),
     updateSettings: (s) => request("PUT", "/api/settings", s),
+
+    // Auth
+    logout: () => request("POST", "/api/logout"),
   };
 })();

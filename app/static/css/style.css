@@ -731,6 +731,46 @@ input[type="color"] { padding: 4px; height: 42px; cursor: pointer; }
 .toast.error { border-color: rgba(var(--accent-rgb), 0.5); }
 .toast.success { border-color: rgba(var(--green-rgb), 0.5); }
 
+/* ---------- Login ---------- */
+.login-wrap {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  padding: 32px 28px;
+}
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+.login-sub {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin: 0 0 22px;
+}
+.login-error {
+  color: var(--red);
+  font-size: 13px;
+  min-height: 18px;
+  margin-bottom: 10px;
+  font-family: var(--mono);
+}
+.login-submit {
+  width: 100%;
+  justify-content: center;
+  margin-top: 4px;
+}
+
 /* ---------- Modal ---------- */
 .modal-backdrop {
   position: fixed; inset: 0;

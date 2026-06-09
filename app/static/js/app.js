@@ -911,6 +911,19 @@ function initTheme() {
   if (btn) btn.onclick = toggleTheme;
 }
 
+function initLogout() {
+  const btn = document.getElementById("logout-btn");
+  if (!btn) return;
+  btn.onclick = async () => {
+    try {
+      await API.logout();
+    } catch (_) {
+      /* ignore — redirect regardless */
+    }
+    window.location.href = "/";
+  };
+}
+
 function toggleTheme() {
   const next = document.body.classList.contains("light-mode") ? "dark" : "light";
   localStorage.setItem("theme", next);
@@ -922,6 +935,7 @@ function toggleTheme() {
 
 /* ---------------- Boot ---------------- */
 initTheme();
+initLogout();
 loadBranding();
 startClock();
 router();

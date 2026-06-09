@@ -13,6 +13,12 @@ flightarchive.db
 # Secrets
 .env
 
+# Local tooling (contains a dev-only LOGBOOK_PASSWORD in launch.json)
+.claude/
+
+# Logs
+*.log
+
 # Editor / OS
 .vscode/
 .idea/

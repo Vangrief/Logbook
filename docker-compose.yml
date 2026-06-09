@@ -10,6 +10,11 @@ services:
       - "7323:7323"
     environment:
       - DATABASE_PATH=/data/flightarchive.db
+      # REQUIRED: shared access password. The app refuses to start without it.
+      - LOGBOOK_PASSWORD=${LOGBOOK_PASSWORD:?Set LOGBOOK_PASSWORD in .env}
+      # Optional: secret used to sign session cookies. If omitted a random one
+      # is generated on startup (sessions drop on container restart).
+      - SESSION_SECRET=${SESSION_SECRET:-}
       # Optional bootstrap of OpenSky credentials via .env (otherwise set them
       # in the Settings page). These are NOT required at build time.
       - TZ=${TZ:-Europe/Zurich}

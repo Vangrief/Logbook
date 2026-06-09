@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Logbook — Sign in</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="login-wrap">
+    <form class="card login-card" id="login-form">
+      <div class="login-brand">
+        <span class="brand-mark">✈</span>
+        <span>Logbook</span>
+      </div>
+      <p class="login-sub">Enter the access password to continue.</p>
+
+      <label class="field">
+        <span>Password</span>
+        <input type="password" id="login-pw" autocomplete="current-password" autofocus />
+      </label>
+
+      <div class="login-error" id="login-error" role="alert"></div>
+
+      <button class="btn btn-primary login-submit" type="submit">Sign in</button>
+    </form>
+  </div>
+
+  <script>
+    // Respect the saved theme so the login page matches the app.
+    if (localStorage.getItem("theme") === "light") {
+      document.body.classList.add("light-mode");
+    }
+
+    const form = document.getElementById("login-form");
+    const err = document.getElementById("login-error");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      err.textContent = "";
+      const btn = form.querySelector("button");
+      btn.disabled = true;
+      try {
+        const res = await fetch("/api/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: document.getElementById("login-pw").value }),
+        });
+        if (res.ok) {
+          window.location.href = "/";
+          return;
+        }
+        const data = await res.json().catch(() => ({}));
+        err.textContent = data.detail || "Sign in failed.";
+      } catch (_) {
+        err.textContent = "Network error. Please try again.";
+      }
+      btn.disabled = false;
+    });
+  </script>
+</body>
+</html>
