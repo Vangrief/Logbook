@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import auth
 from .database import Base, SessionLocal, engine
-from .routers import aircraft, auth as auth_router, flights, settings, stats
+from .routers import airports, aircraft, auth as auth_router, flights, settings, stats
 from .seed import seed
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -64,6 +64,7 @@ app.include_router(aircraft.router)
 app.include_router(flights.router)
 app.include_router(settings.router)
 app.include_router(stats.router)
+app.include_router(airports.router)
 
 
 @app.get("/api/health")

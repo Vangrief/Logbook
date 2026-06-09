@@ -12,6 +12,7 @@ const routes = [
   { re: /^#\/flights$/, handler: renderFlights },
   { re: /^#\/new$/, handler: renderNew },
   { re: /^#\/stats$/, handler: renderStats },
+  { re: /^#\/airports$/, handler: renderAirports },
   { re: /^#\/settings$/, handler: renderSettings },
 ];
 
@@ -30,6 +31,8 @@ function setActiveNav(hash) {
     ? "new"
     : hash.startsWith("#/stats")
     ? "stats"
+    : hash.startsWith("#/airports")
+    ? "airports"
     : hash.startsWith("#/settings")
     ? "settings"
     : "flights";
@@ -862,6 +865,152 @@ function drawBarChart(canvasId, labels, data, valueFmt) {
 }
 
 /* ============================================================
+   AIRPORTS MAP
+   ============================================================ */
+let airportsMap = null;
+const geocodeCache = {};
+
+// Reverse geocode a coordinate to a best-guess airfield/place name. Results
+// are cached in memory; failures are not cached so they can be retried.
+async function reverseGeocode(lat, lon) {
+  const key = lat.toFixed(3) + "," + lon.toFixed(3);
+  if (geocodeCache[key]) return geocodeCache[key];
+  try {
+    const url =
+      `https://nominatim.openstreetmap.org/reverse?format=jsonv2` +
+      `&lat=${lat}&lon=${lon}&zoom=14&addressdetails=1`;
+    const res = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!res.ok) throw new Error("geocode failed");
+    const d = await res.json();
+    const a = d.address || {};
+    const name =
+      d.name ||
+      a.aerodrome || a.aeroway || a.airport ||
+      a.hamlet || a.village || a.town || a.city || a.municipality ||
+      (d.display_name ? d.display_name.split(",")[0] : null) ||
+      "Unknown location";
+    geocodeCache[key] = name;
+    return name;
+  } catch (_) {
+    return "Name unavailable";
+  }
+}
+
+async function renderAirports() {
+  if (airportsMap) {
+    try { airportsMap.remove(); } catch (_) {}
+    airportsMap = null;
+  }
+  loading("Loading airports");
+
+  let data;
+  try {
+    data = await API.getAirports();
+  } catch (e) {
+    view.innerHTML = errorBox(e.message);
+    return;
+  }
+
+  if (!data.airports.length) {
+    view.innerHTML = `<div class="empty" style="padding:90px 20px">
+      <div class="big">🗺</div>
+      <div>No flights logged yet</div>
+    </div>`;
+    return;
+  }
+
+  view.innerHTML = `<div id="airports-map"></div>`;
+
+  const light = document.body.classList.contains("light-mode");
+  const tileStyle = light ? "light_all" : "dark_all";
+  const map = L.map("airports-map", { zoomControl: false });
+  airportsMap = map;
+  L.control.zoom({ position: "topright" }).addTo(map);
+
+  L.tileLayer(
+    `https://{s}.basemaps.cartocdn.com/${tileStyle}/{z}/{x}/{y}{r}.png`,
+    {
+      attribution:
+        "&copy; OpenStreetMap &copy; CARTO · tracks via OpenSky Network",
+      subdomains: "abcd",
+      maxZoom: 19,
+    }
+  ).addTo(map);
+
+  // Overlaid info panel (top-left).
+  const info = L.control({ position: "topleft" });
+  info.onAdd = () => {
+    const div = L.DomUtil.create("div", "airports-info");
+    div.innerHTML =
+      `<div class="ai-row"><span class="ai-val">${data.total_airports}</span> airport${data.total_airports === 1 ? "" : "s"}</div>` +
+      `<div class="ai-row"><span class="ai-val">${data.total_flights}</span> flight${data.total_flights === 1 ? "" : "s"}</div>`;
+    return div;
+  };
+  info.addTo(map);
+
+  const accent = cssVar("--amber");
+  const latlngs = [];
+  data.airports.forEach((ap) => {
+    latlngs.push([ap.lat, ap.lon]);
+    // Radius scales with visits: 1 visit small, 5+ visits larger.
+    const radius = 6 + Math.min(Math.max(ap.visits - 1, 0), 5) * 1.4;
+    const marker = L.circleMarker([ap.lat, ap.lon], {
+      radius,
+      color: "#ffffff",
+      weight: 2,
+      fillColor: accent,
+      fillOpacity: 1,
+    }).addTo(map);
+    marker.bindPopup(airportPopupHtml(ap), { minWidth: 220, maxHeight: 300 });
+    marker.on("popupopen", (e) => onAirportPopupOpen(e, ap));
+  });
+
+  map.fitBounds(L.latLngBounds(latlngs), { padding: [50, 50], maxZoom: 12 });
+}
+
+function airportPopupHtml(ap) {
+  const key = ap.lat.toFixed(3) + "," + ap.lon.toFixed(3);
+  const cached = geocodeCache[key];
+  const flights = ap.flights
+    .slice()
+    .sort((a, b) => b.date - a.date)
+    .map(
+      (f) => `<a class="ap-flight" data-flight="${f.id}">
+        <span>${U.fmtDate(f.date)}</span>
+        <span class="ap-dur">${U.fmtDuration(f.duration_s)}</span>
+      </a>`
+    )
+    .join("");
+  return `<div class="ap-pop">
+    <div class="ap-name">${cached ? U.esc(cached) : "Locating…"}</div>
+    <div class="ap-stats">
+      <div><span class="ap-num">${ap.visits}</span> visit${ap.visits === 1 ? "" : "s"}</div>
+      <div class="ap-dates">First ${U.fmtDate(ap.first_visit)} · Last ${U.fmtDate(ap.last_visit)}</div>
+    </div>
+    <div class="ap-flights">${flights}</div>
+  </div>`;
+}
+
+async function onAirportPopupOpen(e, ap) {
+  const el = e.popup.getElement();
+  if (!el) return;
+
+  // Make the flight rows navigate to their detail view.
+  el.querySelectorAll(".ap-flight[data-flight]").forEach((a) => {
+    a.onclick = () => { window.location.hash = `#/flights/${a.dataset.flight}`; };
+  });
+
+  // Reverse geocode the airfield name on demand (cached).
+  const nameEl = el.querySelector(".ap-name");
+  if (nameEl && nameEl.textContent === "Locating…") {
+    const name = await reverseGeocode(ap.lat, ap.lon);
+    const current = e.popup.getElement();
+    const target = current ? current.querySelector(".ap-name") : null;
+    if (target) target.textContent = name;
+  }
+}
+
+/* ============================================================
    SETTINGS
    ============================================================ */
 async function renderSettings() {
@@ -1124,7 +1273,9 @@ function toggleTheme() {
   // Canvas/Leaflet content reads the theme at draw time, so rebuild views
   // that contain a map or charts to pick up the new palette.
   const hash = window.location.hash;
-  if (/^#\/flights\/\d+$/.test(hash) || hash === "#/stats") router();
+  if (/^#\/flights\/\d+$/.test(hash) || hash === "#/stats" || hash === "#/airports") {
+    router();
+  }
 }
 
 /* ---------------- Boot ---------------- */

@@ -5,7 +5,6 @@ no new tables, no stored aggregates. Day/month bucketing uses Europe/Zurich so
 it lines up with the flight-list day grouping.
 """
 import calendar
-import json
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -16,26 +15,15 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import Aircraft, Flight
-from ..stats import _haversine_m
+from ..stats import cluster_airports
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
 
 ZRH = ZoneInfo("Europe/Zurich")
-AIRPORT_RADIUS_M = 2000  # cluster start/end positions within 2 km
 
 
 def _zdt(ts: int) -> datetime:
     return datetime.fromtimestamp(ts, ZRH)
-
-
-def _count_airport_clusters(points, radius_m: int = AIRPORT_RADIUS_M) -> int:
-    """Greedy clustering: a point joins an existing cluster if within radius."""
-    clusters: list[tuple[float, float]] = []
-    for lat, lon in points:
-        if any(_haversine_m(lat, lon, c[0], c[1]) <= radius_m for c in clusters):
-            continue
-        clusters.append((lat, lon))
-    return len(clusters)
 
 
 @router.get("")
@@ -48,18 +36,8 @@ def get_stats(db: Session = Depends(get_db)):
     total_time_s = sum(f.duration_s or 0 for f in flights)
     total_distance_km = round(sum(f.distance_km or 0.0 for f in flights), 1)
 
-    # Airports: cluster the first/last fix of every flight that has a track.
-    points: list[tuple[float, float]] = []
-    for f in flights:
-        try:
-            path = json.loads(f.raw_track).get("path") or []
-        except (ValueError, TypeError):
-            path = []
-        for wp in (path[:1] + path[-1:]):
-            lat, lon = wp[1], wp[2]
-            if lat is not None and lon is not None:
-                points.append((lat, lon))
-    total_airports = _count_airport_clusters(points)
+    # Airports: shared 2 km clustering of every flight's first/last fix.
+    total_airports = len(cluster_airports(flights))
 
     # ---- Personal records ----
     def rec(flight, attr):

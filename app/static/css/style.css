@@ -731,6 +731,91 @@ input[type="color"] { padding: 4px; height: 42px; cursor: pointer; }
 .toast.error { border-color: rgba(var(--accent-rgb), 0.5); }
 .toast.success { border-color: rgba(var(--green-rgb), 0.5); }
 
+/* ---------- Airports map ---------- */
+#airports-map {
+  height: calc(100vh - 150px);
+  min-height: 420px;
+  width: 100%;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  z-index: 1;
+}
+
+.airports-info {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 13px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+  box-shadow: 0 4px 16px -8px rgba(0, 0, 0, 0.6);
+}
+.airports-info .ai-val {
+  font-family: var(--mono);
+  font-weight: 600;
+  color: var(--amber);
+  font-size: 15px;
+  margin-right: 4px;
+}
+
+/* Themed Leaflet popups (used by the airports map). */
+.leaflet-popup-content-wrapper {
+  background: var(--bg-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 10px 34px -12px rgba(0, 0, 0, 0.7);
+}
+.leaflet-popup-tip {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+}
+.leaflet-popup-close-button { color: var(--text-dim) !important; }
+.leaflet-popup-content { margin: 12px 14px; }
+
+.ap-pop .ap-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.ap-pop .ap-stats { font-size: 12px; color: var(--text-dim); margin-bottom: 8px; }
+.ap-pop .ap-num {
+  font-family: var(--mono);
+  font-weight: 600;
+  color: var(--amber);
+  font-size: 14px;
+}
+.ap-pop .ap-dates {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-soft);
+  margin-top: 3px;
+}
+.ap-pop .ap-flights {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 150px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 6px;
+}
+.ap-pop .ap-flight {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text);
+}
+.ap-pop .ap-flight:hover { background: rgba(var(--accent-rgb), 0.12); color: var(--amber); }
+.ap-pop .ap-flight .ap-dur { color: var(--text-soft); }
+
 /* ---------- Statistics dashboard ---------- */
 .kpi-grid {
   display: grid;
