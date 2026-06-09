@@ -66,20 +66,20 @@ const U = (() => {
     }[c]));
   }
 
-  /* Gradient color along the track: green -> amber -> red.
+  /* Gradient color along the track: sakura pink -> white -> torii red.
      t in [0, 1]. */
   function gradientColor(t) {
     const lerp = (a, b, x) => Math.round(a + (b - a) * x);
-    const green = [34, 197, 94];
-    const amber = [245, 158, 11];
-    const red = [239, 68, 68];
+    const sakura = [244, 167, 185];
+    const white = [240, 236, 228];
+    const red = [230, 57, 70];
     let c;
     if (t < 0.5) {
       const x = t / 0.5;
-      c = [0, 1, 2].map((i) => lerp(green[i], amber[i], x));
+      c = [0, 1, 2].map((i) => lerp(sakura[i], white[i], x));
     } else {
       const x = (t - 0.5) / 0.5;
-      c = [0, 1, 2].map((i) => lerp(amber[i], red[i], x));
+      c = [0, 1, 2].map((i) => lerp(white[i], red[i], x));
     }
     return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
   }

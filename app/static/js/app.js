@@ -208,7 +208,7 @@ function drawFlightGroups(listEl, flights) {
 }
 
 function flightRow(f) {
-  const color = f.color || "#f59e0b";
+  const color = f.color || "#f4a7b9";
   const title = f.nickname || f.registration || "Unknown";
   const notes = f.notes ? U.esc(f.notes) : `<span class="muted">No notes</span>`;
   const row = U.html(`
@@ -366,7 +366,7 @@ function drawMap(f) {
   const mk = (latlng, color, label) =>
     L.circleMarker(latlng, {
       radius: 7,
-      color: "#0a0e1a",
+      color: "#0d0d0d",
       weight: 2,
       fillColor: color,
       fillOpacity: 1,
@@ -374,8 +374,8 @@ function drawMap(f) {
       .addTo(map)
       .bindTooltip(label, { permanent: false, direction: "top" });
 
-  mk(latlngs[0], "#22c55e", "Takeoff");
-  mk(latlngs[latlngs.length - 1], "#ef4444", "Landing");
+  mk(latlngs[0], "#f4a7b9", "Takeoff");
+  mk(latlngs[latlngs.length - 1], "#e63946", "Landing");
 
   map.fitBounds(L.latLngBounds(latlngs), { padding: [30, 30] });
 }
@@ -397,8 +397,8 @@ function drawAltChart(f) {
 
   const ctx = document.getElementById("alt-chart").getContext("2d");
   const grad = ctx.createLinearGradient(0, 0, 0, 220);
-  grad.addColorStop(0, "rgba(245, 158, 11, 0.35)");
-  grad.addColorStop(1, "rgba(245, 158, 11, 0.02)");
+  grad.addColorStop(0, "rgba(230, 57, 70, 0.35)");
+  grad.addColorStop(1, "rgba(230, 57, 70, 0.02)");
 
   altChart = new Chart(ctx, {
     type: "line",
@@ -406,7 +406,7 @@ function drawAltChart(f) {
       datasets: [
         {
           data: points,
-          borderColor: "#f59e0b",
+          borderColor: "#e63946",
           backgroundColor: grad,
           borderWidth: 2,
           fill: true,
@@ -424,11 +424,11 @@ function drawAltChart(f) {
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: "#161f33",
-          borderColor: "#243049",
+          backgroundColor: "#161616",
+          borderColor: "#2a1515",
           borderWidth: 1,
-          titleColor: "#94a3b8",
-          bodyColor: "#e5ecf6",
+          titleColor: "#8a8580",
+          bodyColor: "#f0ece4",
           bodyFont: { family: "JetBrains Mono" },
           callbacks: {
             title: (items) => `T+${items[0].parsed.x.toFixed(1)} min`,
@@ -439,14 +439,14 @@ function drawAltChart(f) {
       scales: {
         x: {
           type: "linear",
-          title: { display: true, text: "minutes", color: "#5b6b85" },
-          ticks: { color: "#5b6b85", font: { family: "JetBrains Mono", size: 10 } },
-          grid: { color: "rgba(36,48,73,0.5)" },
+          title: { display: true, text: "minutes", color: "#6b6560" },
+          ticks: { color: "#6b6560", font: { family: "JetBrains Mono", size: 10 } },
+          grid: { color: "rgba(42,21,21,0.6)" },
         },
         y: {
-          title: { display: true, text: "feet", color: "#5b6b85" },
-          ticks: { color: "#5b6b85", font: { family: "JetBrains Mono", size: 10 } },
-          grid: { color: "rgba(36,48,73,0.5)" },
+          title: { display: true, text: "feet", color: "#6b6560" },
+          ticks: { color: "#6b6560", font: { family: "JetBrains Mono", size: 10 } },
+          grid: { color: "rgba(42,21,21,0.6)" },
         },
       },
     },
@@ -805,7 +805,7 @@ function openAircraftModal(a = null) {
           <label class="field"><span>Nickname (optional)</span>
             <input id="m-nick" value="${U.esc(a?.nickname || "")}" /></label>
           <label class="field"><span>Track Color</span>
-            <input id="m-color" type="color" value="${U.esc(a?.color || "#f59e0b")}" /></label>
+            <input id="m-color" type="color" value="${U.esc(a?.color || "#e63946")}" /></label>
         </div>
         <div class="flex flex-end row-gap">
           <button class="btn btn-ghost" id="m-cancel">Cancel</button>

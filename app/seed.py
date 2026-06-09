@@ -13,14 +13,14 @@ SEED_AIRCRAFT = [
         "icao24": "",
         "model": "Bristell B23-912iS",
         "nickname": None,
-        "color": "#f59e0b",
+        "color": "#e63946",
     },
     {
         "registration": "HB-EZE",
         "icao24": "",
         "model": "Bristell B23-912iS",
         "nickname": None,
-        "color": "#22d3ee",
+        "color": "#f4a7b9",
     },
 ]
 
