@@ -265,7 +265,44 @@ input[type="color"] { padding: 4px; height: 42px; cursor: pointer; }
 }
 
 /* ---------- Flight list ---------- */
-.flight-list { display: flex; flex-direction: column; gap: 12px; }
+.flight-list { display: flex; flex-direction: column; gap: 0; }
+
+/* Day grouping (Europe/Zurich) — lightweight, no heavy boxes. */
+.day-group + .day-group { margin-top: 22px; }
+.day-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 4px 8px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.day-header .d-date {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  letter-spacing: 0.3px;
+}
+.day-header .d-meta {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.day-rows { display: flex; flex-direction: column; gap: 12px; }
+.day-rows .flight-row { position: relative; }
+/* Subtle dotted connector bridging the gap to the flight above when the two
+   belong to the same session. */
+.day-rows .flight-row.linked::before {
+  content: "";
+  position: absolute;
+  left: 22px;
+  top: -12px;
+  height: 12px;
+  border-left: 2px dotted rgba(245, 158, 11, 0.45);
+  pointer-events: none;
+}
 
 .flight-row {
   display: grid;

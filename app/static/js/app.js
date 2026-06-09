@@ -142,7 +142,7 @@ function drawFlights(flights) {
       <div class="muted" style="margin-top:6px">Log your first flight to populate the archive.</div>
     </div>`;
   } else {
-    flights.forEach((f) => listEl.appendChild(flightRow(f)));
+    drawFlightGroups(listEl, flights);
   }
 
   const reload = () => {
@@ -154,6 +154,57 @@ function drawFlights(flights) {
   document.getElementById("f-aircraft").onchange = reload;
   document.getElementById("f-sort").onchange = reload;
   document.getElementById("f-order").onchange = reload;
+}
+
+// Group flights into Europe/Zurich calendar days (preserving the current
+// sort order) and render a subtle date header + connector for flights that
+// are part of the same session (<4 h between landing and next takeoff).
+function drawFlightGroups(listEl, flights) {
+  const SESSION_GAP_S = 4 * 3600;
+
+  const groups = [];
+  let current = null;
+  for (const f of flights) {
+    const key = U.zurichDateKey(f.start_time);
+    if (!current || current.key !== key) {
+      current = { key, ts: f.start_time, flights: [] };
+      groups.push(current);
+    }
+    current.flights.push(f);
+  }
+
+  groups.forEach((g) => {
+    const total = g.flights.reduce((s, f) => s + (f.duration_s || 0), 0);
+    const n = g.flights.length;
+
+    const groupEl = U.html(`
+      <section class="day-group">
+        <div class="day-header">
+          <span class="d-date">${U.esc(U.zurichDateLabel(g.ts))}</span>
+          <span class="d-meta">${n} flight${n === 1 ? "" : "s"} · ${U.fmtDuration(total)}</span>
+        </div>
+        <div class="day-rows"></div>
+      </section>
+    `);
+    const rowsEl = groupEl.querySelector(".day-rows");
+
+    g.flights.forEach((f, i) => {
+      const row = flightRow(f);
+      if (i > 0) {
+        // Connect to the adjacent flight if the ground time between them
+        // is under the session threshold (direction-agnostic).
+        const prev = g.flights[i - 1];
+        const earlier = f.start_time <= prev.start_time ? f : prev;
+        const later = f.start_time <= prev.start_time ? prev : f;
+        if (later.start_time - earlier.end_time < SESSION_GAP_S) {
+          row.classList.add("linked");
+        }
+      }
+      rowsEl.appendChild(row);
+    });
+
+    listEl.appendChild(groupEl);
+  });
 }
 
 function flightRow(f) {

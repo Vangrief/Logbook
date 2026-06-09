@@ -29,6 +29,22 @@ const U = (() => {
     return new Intl.DateTimeFormat("en-CA", opts).format(d).replace(", ", " ");
   }
 
+  // Calendar-date key in Europe/Zurich, e.g. "2026-06-03" (CET/CEST aware).
+  function zurichDateKey(ts) {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Europe/Zurich",
+      year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date(ts * 1000));
+  }
+
+  // Human date label in Europe/Zurich, e.g. "Tuesday, 3 June 2026".
+  function zurichDateLabel(ts) {
+    return new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Europe/Zurich",
+      weekday: "long", day: "numeric", month: "long", year: "numeric",
+    }).format(new Date(ts * 1000));
+  }
+
   function fmtDuration(seconds) {
     const h = Math.floor(seconds / 3600);
     const m = Math.round((seconds % 3600) / 60);
@@ -86,6 +102,6 @@ const U = (() => {
 
   return {
     fmtDate, fmtDateTime, fmtTime, fmtZoned, fmtDuration, num, esc,
-    gradientColor, toast, html,
+    zurichDateKey, zurichDateLabel, gradientColor, toast, html,
   };
 })();
