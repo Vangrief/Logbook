@@ -54,10 +54,27 @@
         <span class="val" id="clk-zrh">--:--:--</span>
       </div>
     </div>
-    <button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark mode">🌙</button>
+    <button class="theme-toggle js-theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark mode"><span class="js-theme-icon">🌙</span></button>
     <div class="pilot" id="pilot-name"></div>
-    <button class="theme-toggle nav-logout" id="logout-btn" type="button" title="Log out" aria-label="Log out">⏻</button>
+    <button class="theme-toggle nav-logout js-logout" id="logout-btn" type="button" title="Log out" aria-label="Log out">⏻</button>
+    <button class="nav-toggle" id="nav-toggle" type="button" aria-label="Menu" aria-expanded="false" aria-controls="mobile-menu">☰</button>
   </header>
+
+  <!-- Mobile navigation dropdown (shown < 768px) -->
+  <div class="mobile-menu" id="mobile-menu">
+    <a class="menu-item" href="#/flights" data-nav="flights">Flights</a>
+    <a class="menu-item" href="#/new" data-nav="new">Log Flight</a>
+    <a class="menu-item" href="#/stats" data-nav="stats">Stats</a>
+    <a class="menu-item" href="#/airports" data-nav="airports">Airports</a>
+    <a class="menu-item" href="#/settings" data-nav="settings">Settings</a>
+    <div class="menu-divider"></div>
+    <button class="menu-item menu-action js-theme-toggle" type="button">
+      <span class="js-theme-icon">🌙</span><span>Theme</span>
+    </button>
+    <button class="menu-item menu-action js-logout" type="button">
+      <span>⏻</span><span>Log out</span>
+    </button>
+  </div>
 
   <main id="view"></main>
 

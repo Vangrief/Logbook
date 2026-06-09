@@ -36,7 +36,8 @@ function setActiveNav(hash) {
     : hash.startsWith("#/settings")
     ? "settings"
     : "flights";
-  document.querySelectorAll(".nav a").forEach((a) =>
+  // Covers both the desktop nav and the mobile menu links.
+  document.querySelectorAll("[data-nav]").forEach((a) =>
     a.classList.toggle("active", a.dataset.nav === key)
   );
 }
@@ -1240,34 +1241,75 @@ function startClock() {
 function applyTheme(theme) {
   const light = theme === "light";
   document.body.classList.toggle("light-mode", light);
-  const btn = document.getElementById("theme-toggle");
-  if (btn) {
-    btn.textContent = light ? "☀️" : "🌙";
+  // There can be more than one toggle (navbar + mobile menu).
+  document.querySelectorAll(".js-theme-icon").forEach((el) => {
+    el.textContent = light ? "☀️" : "🌙";
+  });
+  document.querySelectorAll(".js-theme-toggle").forEach((btn) => {
     btn.setAttribute(
       "aria-label",
       light ? "Switch to dark mode" : "Switch to light mode"
     );
-  }
+  });
 }
 
 function initTheme() {
   // Default to dark; honor saved preference.
   applyTheme(localStorage.getItem("theme") === "light" ? "light" : "dark");
-  const btn = document.getElementById("theme-toggle");
-  if (btn) btn.onclick = toggleTheme;
+  document.querySelectorAll(".js-theme-toggle").forEach((btn) => {
+    btn.onclick = toggleTheme;
+  });
 }
 
 function initLogout() {
-  const btn = document.getElementById("logout-btn");
-  if (!btn) return;
-  btn.onclick = async () => {
-    try {
-      await API.logout();
-    } catch (_) {
-      /* ignore — redirect regardless */
-    }
-    window.location.href = "/login";
+  document.querySelectorAll(".js-logout").forEach((btn) => {
+    btn.onclick = async () => {
+      try {
+        await API.logout();
+      } catch (_) {
+        /* ignore — redirect regardless */
+      }
+      window.location.href = "/login";
+    };
+  });
+}
+
+/* ---------------- Mobile navigation menu ---------------- */
+function initMobileMenu() {
+  const toggle = document.getElementById("nav-toggle");
+  const menu = document.getElementById("mobile-menu");
+  if (!toggle || !menu) return;
+
+  const close = () => {
+    menu.classList.remove("open");
+    toggle.setAttribute("aria-expanded", "false");
   };
+  const open = () => {
+    menu.classList.add("open");
+    toggle.setAttribute("aria-expanded", "true");
+  };
+
+  toggle.addEventListener("click", (e) => {
+    e.stopPropagation();
+    menu.classList.contains("open") ? close() : open();
+  });
+
+  // Tapping a nav item closes the menu (navigation happens via the hash).
+  menu.querySelectorAll("a[data-nav]").forEach((a) =>
+    a.addEventListener("click", close)
+  );
+
+  // Tapping outside the menu (and not on the toggle) closes it.
+  document.addEventListener("click", (e) => {
+    if (!menu.classList.contains("open")) return;
+    if (menu.contains(e.target) || toggle.contains(e.target)) return;
+    close();
+  });
+
+  // Escape closes the menu.
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") close();
+  });
 }
 
 function toggleTheme() {
@@ -1285,6 +1327,7 @@ function toggleTheme() {
 /* ---------------- Boot ---------------- */
 initTheme();
 initLogout();
+initMobileMenu();
 loadBranding();
 startClock();
 router();
