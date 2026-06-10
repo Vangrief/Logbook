@@ -1200,13 +1200,13 @@ const cesium3d = (() => {
     }
     if (!state.active) return;
     try {
-      await initViewer(token, flight);
+      initViewer(token, flight);
     } catch (e) {
       message("Could not start the 3D viewer.");
     }
   }
 
-  async function initViewer(token, flight) {
+  function initViewer(token, flight) {
     Cesium.Ion.defaultAccessToken = token;
     const viewer = new Cesium.Viewer("cesium-container", {
       animation: false,
@@ -1220,6 +1220,12 @@ const cesium3d = (() => {
       infoBox: false,
       selectionIndicator: false,
       baseLayer: false,
+      // Cesium World Terrain for the globe surface (the track/markers sit on
+      // it). No terrain *sampling* — the track uses its own MSL altitude.
+      terrain: Cesium.Terrain.fromWorldTerrain({
+        requestVertexNormals: true,
+        requestWaterMask: true,
+      }),
     });
     state.viewer = viewer;
 
@@ -1240,16 +1246,20 @@ const cesium3d = (() => {
 
     const lon = (p) => p[2];
     const lat = (p) => p[1];
-    const alt = (p) => (p[3] != null ? p[3] : 0); // MSL metres from OpenSky
+    // OpenSky altitude is metres above MSL. WGS84 geoid undulation (~45 m in
+    // Switzerland) is visually negligible, so we use it directly as the
+    // ellipsoid height — no terrain sampling, no double-counting.
+    const alt = (p) => (p[3] != null ? p[3] : 0);
 
-    // Placeholder track: clamp to ground while terrain heights load.
-    const groundFlat = [];
-    pts.forEach((p) => groundFlat.push(lon(p), lat(p)));
-    state.trackEntity = viewer.entities.add({
+    // Flight path drawn directly at its real altitude.
+    const flat = [];
+    pts.forEach((p) => flat.push(lon(p), lat(p), alt(p)));
+    const positions = Cesium.Cartesian3.fromDegreesArrayHeights(flat);
+    viewer.entities.add({
       polyline: {
-        positions: Cesium.Cartesian3.fromDegreesArray(groundFlat),
+        positions,
         width: 3,
-        clampToGround: true,
+        clampToGround: false,
         material: new Cesium.PolylineGlowMaterialProperty({
           glowPower: 0.2,
           color: Cesium.Color.fromCssColorString("#c0392b"),
@@ -1272,24 +1282,19 @@ const cesium3d = (() => {
     viewer.entities.add(marker(pts[0], "#22c55e")); // takeoff
     viewer.entities.add(marker(pts[pts.length - 1], "#e63946")); // landing
 
-    // Build a time-sampled position property from a list of heights.
-    const buildProperty = (heights) => {
-      const prop = new Cesium.SampledPositionProperty();
-      pts.forEach((p, i) =>
-        prop.addSample(
-          Cesium.JulianDate.fromDate(new Date(p[0] * 1000)),
-          Cesium.Cartesian3.fromDegrees(lon(p), lat(p), heights[i])
-        )
-      );
-      prop.setInterpolationOptions({
-        interpolationDegree: 1,
-        interpolationAlgorithm: Cesium.LinearApproximation,
-      });
-      return prop;
-    };
-
-    // Start with raw MSL altitude; corrected once terrain heights arrive.
-    state.positionProperty = buildProperty(pts.map(alt));
+    // Time-sampled position for replay, at real altitude.
+    const property = new Cesium.SampledPositionProperty();
+    pts.forEach((p) =>
+      property.addSample(
+        Cesium.JulianDate.fromDate(new Date(p[0] * 1000)),
+        Cesium.Cartesian3.fromDegrees(lon(p), lat(p), alt(p))
+      )
+    );
+    property.setInterpolationOptions({
+      interpolationDegree: 1,
+      interpolationAlgorithm: Cesium.LinearApproximation,
+    });
+    state.positionProperty = property;
 
     const startJd = Cesium.JulianDate.fromDate(new Date(pts[0][0] * 1000));
     const stopJd = Cesium.JulianDate.fromDate(new Date(pts[pts.length - 1][0] * 1000));
@@ -1297,8 +1302,8 @@ const cesium3d = (() => {
     // Aircraft: an elongated box; VelocityOrientationProperty aligns +X (its
     // long axis) to the direction of travel, giving correct heading + pitch.
     state.aircraft = viewer.entities.add({
-      position: state.positionProperty,
-      orientation: new Cesium.VelocityOrientationProperty(state.positionProperty),
+      position: property,
+      orientation: new Cesium.VelocityOrientationProperty(property),
       box: {
         dimensions: new Cesium.Cartesian3(180, 70, 28),
         material: Cesium.Color.fromCssColorString("#c0392b"),
@@ -1318,11 +1323,7 @@ const cesium3d = (() => {
     // Camera: above the track centre at ~45° looking down, high enough to see
     // the whole route (and at least ~3× the max flight altitude up).
     const maxAlt = Math.max(1000, ...pts.map(alt));
-    const sphere = Cesium.BoundingSphere.fromPoints(
-      Cesium.Cartesian3.fromDegreesArrayHeights(
-        pts.reduce((a, p) => { a.push(lon(p), lat(p), alt(p)); return a; }, [])
-      )
-    );
+    const sphere = Cesium.BoundingSphere.fromPoints(positions);
     const range = Math.max(sphere.radius * 2.2, maxAlt * 3);
     viewer.camera.flyToBoundingSphere(sphere, {
       duration: 1.4,
@@ -1334,57 +1335,6 @@ const cesium3d = (() => {
     });
 
     buildOverlays();
-
-    // ---- Terrain correction: lift the track ABOVE the terrain surface ----
-    // OpenSky altitudes are MSL; placed as ellipsoidal heights they appear
-    // underground. Sample terrain at (downsampled) points and add the flight
-    // altitude on top, then interpolate offsets across the full track.
-    try {
-      const terrainProvider = await Cesium.createWorldTerrainAsync({
-        requestVertexNormals: true,
-        requestWaterMask: true,
-      });
-      if (!state.viewer || state.viewer !== viewer) return; // user exited
-      viewer.terrainProvider = terrainProvider;
-
-      const step = Math.max(1, Math.ceil(pts.length / 200));
-      const sIdx = [];
-      for (let i = 0; i < pts.length; i += step) sIdx.push(i);
-      if (sIdx[sIdx.length - 1] !== pts.length - 1) sIdx.push(pts.length - 1);
-
-      const cartos = sIdx.map((i) => Cesium.Cartographic.fromDegrees(lon(pts[i]), lat(pts[i])));
-      await Cesium.sampleTerrainMostDetailed(terrainProvider, cartos);
-      if (!state.viewer || state.viewer !== viewer) return;
-      const sH = cartos.map((c) => (c.height != null && isFinite(c.height) ? c.height : 0));
-
-      const terrainAt = (j) => {
-        for (let k = 0; k < sIdx.length - 1; k++) {
-          if (j >= sIdx[k] && j <= sIdx[k + 1]) {
-            const span = sIdx[k + 1] - sIdx[k] || 1;
-            const frac = (j - sIdx[k]) / span;
-            return sH[k] + (sH[k + 1] - sH[k]) * frac;
-          }
-        }
-        return sH[sH.length - 1];
-      };
-      const corrected = pts.map((p, j) => terrainAt(j) + alt(p));
-
-      // Replace the placeholder with the elevated track.
-      const eflat = [];
-      pts.forEach((p, j) => eflat.push(lon(p), lat(p), corrected[j]));
-      state.trackEntity.polyline.positions =
-        Cesium.Cartesian3.fromDegreesArrayHeights(eflat);
-      state.trackEntity.polyline.clampToGround = false;
-
-      // Re-base the replay aircraft onto the corrected heights.
-      const corrected_prop = buildProperty(corrected);
-      state.positionProperty = corrected_prop;
-      state.aircraft.position = corrected_prop;
-      state.aircraft.orientation = new Cesium.VelocityOrientationProperty(corrected_prop);
-    } catch (_) {
-      // Terrain unavailable (token/network) — keep the ground-clamped
-      // placeholder, which is never below the surface.
-    }
   }
 
   function buildOverlays() {
