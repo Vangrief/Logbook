@@ -1,6 +1,8 @@
 /* Logbook service worker — minimal, makes the app installable + offline shell.
-   Cache-first for static assets, network-first for API calls. */
-const CACHE = "logbook-v1";
+   Cache-first for static assets, network-first for API calls.
+   The placeholder in CACHE_VERSION below is replaced with the git commit hash
+   at build time (see Dockerfile) so every build invalidates the old cache. */
+const CACHE_VERSION = 'logbook-CACHE_VERSION_PLACEHOLDER';
 
 const SHELL = [
   "/",
@@ -23,7 +25,7 @@ const SHELL = [
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches
-      .open(CACHE)
+      .open(CACHE_VERSION)
       // Tolerate individual failures (e.g. "/" may redirect when signed out).
       .then((cache) => Promise.all(SHELL.map((url) => cache.add(url).catch(() => {}))))
       .then(() => self.skipWaiting())
@@ -35,7 +37,7 @@ self.addEventListener("activate", (event) => {
     caches
       .keys()
       .then((keys) =>
-        Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
+        Promise.all(keys.filter((k) => k !== CACHE_VERSION).map((k) => caches.delete(k)))
       )
       .then(() => self.clients.claim())
   );
@@ -62,7 +64,7 @@ self.addEventListener("fetch", (event) => {
           // Cache same-origin successful GETs for later.
           if (resp.ok && url.origin === self.location.origin) {
             const clone = resp.clone();
-            caches.open(CACHE).then((c) => c.put(req, clone));
+            caches.open(CACHE_VERSION).then((c) => c.put(req, clone));
           }
           return resp;
         })

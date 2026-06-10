@@ -13,6 +13,18 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Application code.
 COPY app ./app
 
+# Cache-bust the service worker with the current git commit hash, so every
+# `docker compose up --build` automatically invalidates the old PWA cache.
+# Requires the .git directory to be present in the build context.
+COPY .git ./.git
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && GIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "dev") \
+    && sed -i "s/CACHE_VERSION_PLACEHOLDER/$GIT_HASH/" app/static/sw.js \
+    && echo "Service worker cache version: logbook-$GIT_HASH" \
+    && apt-get purge -y --auto-remove git \
+    && rm -rf ./.git /var/lib/apt/lists/*
+
 # Persistent data volume (SQLite database).
 RUN mkdir -p /data
 VOLUME ["/data"]
