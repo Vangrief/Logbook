@@ -1200,13 +1200,13 @@ const cesium3d = (() => {
     }
     if (!state.active) return;
     try {
-      initViewer(token, flight);
+      await initViewer(token, flight);
     } catch (e) {
       message("Could not start the 3D viewer.");
     }
   }
 
-  function initViewer(token, flight) {
+  async function initViewer(token, flight) {
     Cesium.Ion.defaultAccessToken = token;
     const viewer = new Cesium.Viewer("cesium-container", {
       animation: false,
@@ -1220,12 +1220,6 @@ const cesium3d = (() => {
       infoBox: false,
       selectionIndicator: false,
       baseLayer: false,
-      // Cesium World Terrain for the globe surface (the track/markers sit on
-      // it). No terrain *sampling* — the track uses its own MSL altitude.
-      terrain: Cesium.Terrain.fromWorldTerrain({
-        requestVertexNormals: true,
-        requestWaterMask: true,
-      }),
     });
     state.viewer = viewer;
 
@@ -1246,11 +1240,37 @@ const cesium3d = (() => {
 
     const lon = (p) => p[2];
     const lat = (p) => p[1];
-    // OpenSky altitude is metres above MSL. A +200 m offset lifts the line
-    // clear of terrain (baro altitude near the ground is unreliable, and MSL
-    // can sit below the terrain surface, e.g. 304 m MSL over ~400 m terrain).
-    const ALT_OFFSET = 200;
-    const elev = (p) => (p[3] != null ? p[3] : 0) + ALT_OFFSET;
+    const rawAlt = (p) => (p[3] != null ? p[3] : 0);
+
+    // OpenSky altitudes are quantized baro/MSL values (e.g. 304 m / 609 m =
+    // 1000/2000 ft) and can sit BELOW the terrain — at LSZR the field is
+    // ~398 m but the lowest track value reads 304 m. Lift the whole track by
+    // an offset derived from the terrain height at the takeoff point:
+    //   offset = terrain(takeoff) − first_track_alt + 100 m margin
+    // (≈ 195 m for the LSZR example). Falls back to a fixed +200 m when
+    // terrain isn't available. The quantized steps themselves are an OpenSky
+    // data limitation and are left as-is.
+    let altOffset = 200;
+    try {
+      const terrainProvider = await Cesium.createWorldTerrainAsync({
+        requestVertexNormals: true,
+        requestWaterMask: true,
+      });
+      if (!state.viewer || state.viewer !== viewer) return; // user exited
+      viewer.terrainProvider = terrainProvider;
+
+      const takeoff = [Cesium.Cartographic.fromDegrees(lon(pts[0]), lat(pts[0]))];
+      await Cesium.sampleTerrainMostDetailed(terrainProvider, takeoff);
+      if (!state.viewer || state.viewer !== viewer) return;
+      const groundH = takeoff[0].height;
+      if (groundH != null && isFinite(groundH)) {
+        altOffset = Math.max(0, groundH - rawAlt(pts[0])) + 100;
+      }
+    } catch (_) {
+      // Terrain unavailable (token/network) — keep the +200 m fallback; the
+      // globe just stays ellipsoid-smooth.
+    }
+    const elev = (p) => rawAlt(p) + altOffset;
 
     // Dual-line (à la ForeFlight/SkyVector):
     // 1) a thin white "shadow" clamped to the ground to show the map path,
