@@ -1,7 +1,16 @@
 """FastAPI application entry point for Logbook."""
+import logging
 import os
 
 from fastapi import FastAPI, Request
+
+# Ensure application INFO logs reach stdout/stderr (visible in `docker logs`).
+# Uvicorn configures its own loggers but leaves the root logger untouched, so
+# without this our getLogger("logbook.*") INFO messages would be dropped.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 

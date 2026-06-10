@@ -4,9 +4,12 @@ Tokens are cached in-process and refreshed automatically a minute before
 expiry (OpenSky tokens live ~30 minutes). A single retry with a forced
 token refresh is performed on a 401 in case the cached token went stale.
 """
+import logging
 import time
 
 import httpx
+
+logger = logging.getLogger("logbook.opensky")
 
 TOKEN_URL = (
     "https://auth.opensky-network.org/auth/realms/opensky-network/"
@@ -153,10 +156,16 @@ async def fetch_flights(
             400,
         )
 
+    url = f"{API_BASE}/flights/aircraft"
+    # Log the exact request (icao24 is lowercased, as OpenSky requires).
+    logger.info(
+        "OpenSky GET %s?icao24=%s&begin=%d&end=%d", url, icao24, begin, end
+    )
+
     async def _do_request(token: str) -> httpx.Response:
         async with httpx.AsyncClient(timeout=45.0) as client:
             return await client.get(
-                f"{API_BASE}/flights/aircraft",
+                url,
                 params={"icao24": icao24, "begin": begin, "end": end},
                 headers={"Authorization": f"Bearer {token}"},
             )
@@ -179,15 +188,26 @@ async def fetch_flights(
         )
     # 404 / empty simply means no flights in the requested window.
     if resp.status_code == 404:
+        logger.info("OpenSky flights/aircraft 404 (no flights) icao24=%s", icao24)
         return []
     if resp.status_code != 200:
+        # Surface (don't silently swallow) the unexpected body for diagnosis.
+        logger.warning(
+            "OpenSky flights/aircraft unexpected status %d icao24=%s body=%r",
+            resp.status_code, icao24, resp.text[:300],
+        )
         raise OpenSkyError(f"OpenSky API error ({resp.status_code}).", 502)
 
     if not resp.text or not resp.text.strip():
+        logger.info("OpenSky flights/aircraft 200 (empty body) icao24=%s", icao24)
         return []
 
-    data = resp.json()
-    return data or []
+    data = resp.json() or []
+    logger.info(
+        "OpenSky flights/aircraft 200 icao24=%s returned=%d flight(s)",
+        icao24, len(data),
+    )
+    return data
 
 
 async def fetch_state(

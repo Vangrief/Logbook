@@ -1,6 +1,8 @@
 """Flight endpoints: create from OpenSky, list, detail, notes, delete."""
 import json
+import logging
 import time as time_module
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -24,7 +26,16 @@ DISCOVERY_WINDOW_S = 6 * 3600
 # Tolerance when matching a discovered flight to an already-saved one.
 MATCH_TOLERANCE_S = 600
 
+logger = logging.getLogger("logbook.discovery")
+
 router = APIRouter(prefix="/api/flights", tags=["flights"])
+
+
+def _utc(ts: int) -> str:
+    """Format a unix timestamp as a human-readable UTC string for logs."""
+    if not ts:
+        return "—"
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 def _to_summary(flight: Flight) -> FlightSummary:
@@ -85,12 +96,22 @@ async def discover_flights(
             "Add it in Settings.",
         )
 
+    begin = time - window
+    end = time + window
+    logger.info(
+        "Discovery request: icao24=%s reg=%s entered=%s window=[%s .. %s]",
+        aircraft.icao24, aircraft.registration, _utc(time), _utc(begin), _utc(end),
+    )
+
     client_id, client_secret = get_credentials(db)
     try:
         raw_flights = await opensky.fetch_flights(
-            aircraft.icao24, time - window, time + window, client_id, client_secret
+            aircraft.icao24, begin, end, client_id, client_secret
         )
     except opensky.OpenSkyError as exc:
+        logger.warning(
+            "Discovery failed for icao24=%s: %s", aircraft.icao24, exc.message
+        )
         raise HTTPException(status_code=exc.status_code, detail=exc.message)
 
     existing = list(
@@ -99,6 +120,7 @@ async def discover_flights(
 
     now = int(time_module.time())
     results: list[DiscoveredFlight] = []
+    matched_log: list[str] = []
     for fl in raw_flights:
         first = int(fl.get("firstSeen") or 0)
         last_raw = fl.get("lastSeen")
@@ -106,11 +128,21 @@ async def discover_flights(
         # Ongoing flight: no arrival time yet, or an arrival time in the future.
         live = last_raw in (None, 0) or last > now
 
+        # A discovered flight is "already logged" if an existing flight departed
+        # at (about) the same moment. query_time is exactly the firstSeen used
+        # when the flight was added via discovery (precise match); start_time is
+        # a track-derived fallback for any other origin.
         logged_id = None
         for ex in existing:
-            if abs(ex.start_time - first) <= MATCH_TOLERANCE_S:
+            if first and (
+                abs(ex.query_time - first) <= MATCH_TOLERANCE_S
+                or abs(ex.start_time - first) <= MATCH_TOLERANCE_S
+            ):
                 logged_id = ex.id
                 break
+
+        if logged_id is not None:
+            matched_log.append(f"firstSeen={_utc(first)}->flight#{logged_id}")
 
         results.append(
             DiscoveredFlight(
@@ -126,6 +158,12 @@ async def discover_flights(
                 live=live,
             )
         )
+
+    logger.info(
+        "Discovery result: icao24=%s flights_returned=%d already_logged=%d %s",
+        aircraft.icao24, len(results), len(matched_log),
+        ("[" + ", ".join(matched_log) + "]") if matched_log else "",
+    )
 
     results.sort(key=lambda r: r.first_seen)
     return results

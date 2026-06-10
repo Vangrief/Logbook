@@ -1109,6 +1109,10 @@ function newFormTimestamp() {
   return Number.isNaN(ts) ? null : ts;
 }
 
+// Incremented per request so out-of-order responses (from rapid field
+// changes) can't overwrite a newer result.
+let discoverySeq = 0;
+
 async function runDiscovery() {
   const box = document.getElementById("discovery");
   if (!box) return;
@@ -1120,6 +1124,7 @@ async function runDiscovery() {
     return;
   }
 
+  const seq = ++discoverySeq;
   box.innerHTML = `<div class="card panel"><div class="empty" style="padding:36px">
     <span class="spinner"></span>
     <div style="margin-top:12px">Searching OpenSky for flights ±6 h…</div>
@@ -1127,8 +1132,10 @@ async function runDiscovery() {
 
   try {
     const flights = await API.discoverFlights({ aircraft_id: aircraftId, time: ts });
+    if (seq !== discoverySeq) return; // a newer request superseded this one
     drawDiscovery(flights, ts, aircraftId);
   } catch (e) {
+    if (seq !== discoverySeq) return;
     box.innerHTML = `<div class="card panel"><div class="empty" style="padding:36px">
       <div class="big">⚠</div><div>${U.esc(e.message)}</div>
     </div></div>`;
