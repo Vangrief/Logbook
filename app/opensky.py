@@ -4,6 +4,7 @@ Tokens are cached in-process and refreshed automatically a minute before
 expiry (OpenSky tokens live ~30 minutes). A single retry with a forced
 token refresh is performed on a 401 in case the cached token went stale.
 """
+import asyncio
 import logging
 import time
 
@@ -284,3 +285,48 @@ async def fetch_state(
         "on_ground": bool(row[8]),
         "last_contact": int(last_contact),
     }
+
+
+async def fetch_tracks_for_window(
+    icao24: str, times: list[int], client_id: str, client_secret: str
+) -> list[dict]:
+    """Probe /tracks/all at each timestamp in `times` and return the distinct
+    tracks found.
+
+    Used to surface "limbo" flights that the historical /flights/aircraft
+    endpoint hasn't published yet. Each probe is best-effort: a 404 / empty /
+    rate-limited slot simply yields nothing. Results are de-duplicated against
+    each other by start time (±600 s); the caller is responsible for de-duping
+    them against the historical flight list.
+    """
+    icao24 = icao24.strip().lower()
+    if not times:
+        return []
+    if not client_id or not client_secret:
+        return []
+
+    async def _one(ts: int):
+        try:
+            return await fetch_track(icao24, ts, client_id, client_secret)
+        except OpenSkyError:
+            return None  # no track / 404 / rate-limited at this slot
+
+    probed = await asyncio.gather(*[_one(ts) for ts in times])
+
+    tracks: list[dict] = []
+    seen_starts: list[int] = []
+    for tr in probed:
+        path = (tr or {}).get("path") or []
+        if not path:
+            continue
+        start = int(tr.get("startTime") or path[0][0])
+        if any(abs(start - s) <= 600 for s in seen_starts):
+            continue
+        seen_starts.append(start)
+        tracks.append(tr)
+
+    logger.info(
+        "OpenSky tracks/all window probe icao24=%s slots=%d found=%d distinct track(s)",
+        icao24, len(times), len(tracks),
+    )
+    return tracks

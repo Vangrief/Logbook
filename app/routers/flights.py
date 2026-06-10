@@ -1,4 +1,5 @@
 """Flight endpoints: create from OpenSky, list, detail, notes, delete."""
+import asyncio
 import json
 import logging
 import time as time_module
@@ -23,8 +24,13 @@ from ..settings_store import get_credentials
 
 # ±6 hour default search window for flight discovery.
 DISCOVERY_WINDOW_S = 6 * 3600
-# Tolerance when matching a discovered flight to an already-saved one.
+# Tolerance when matching a discovered flight to an already-saved one and when
+# de-duplicating overlapping candidate windows.
 MATCH_TOLERANCE_S = 600
+# /tracks/all probe granularity and the assumed length of a flight when only a
+# single endpoint (e.g. a live state vector) is known.
+TRACKS_SLOT_S = 2 * 3600
+ESTIMATED_FLIGHT_S = 3600
 
 logger = logging.getLogger("logbook.discovery")
 
@@ -36,6 +42,16 @@ def _utc(ts: int) -> str:
     if not ts:
         return "—"
     return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def _last_eff(first: int, last: int) -> int:
+    """Effective end of a candidate window (estimate one when none is known)."""
+    return last if last else first + ESTIMATED_FLIGHT_S
+
+
+def _windows_overlap(af: int, al: int, bf: int, bl: int, tol: int = MATCH_TOLERANCE_S) -> bool:
+    """Whether two [first, last] windows overlap within `tol` seconds."""
+    return af <= _last_eff(bf, bl) + tol and bf <= _last_eff(af, al) + tol
 
 
 def _to_summary(flight: Flight) -> FlightSummary:
@@ -83,8 +99,11 @@ async def discover_flights(
 ):
     """Find candidate flights for an aircraft within ±`window` of `time`.
 
-    Returns OpenSky's flight list (departure/arrival, callsign, duration) and
-    flags any that are already stored locally.
+    Combines three OpenSky sources, queried in parallel:
+      • historical /flights/aircraft (completed flights, lags 1-3 h)
+      • live /states/all (current airborne / just-landed state)
+      • /tracks/all probes (limbo flights not yet in the historical list)
+    Historical flights take priority on merge; the live flight is always shown.
     """
     aircraft = db.get(Aircraft, aircraft_id)
     if aircraft is None:
@@ -96,42 +115,128 @@ async def discover_flights(
             "Add it in Settings.",
         )
 
+    icao24 = aircraft.icao24
     begin = time - window
     end = time + window
     logger.info(
         "Discovery request: icao24=%s reg=%s entered=%s window=[%s .. %s]",
-        aircraft.icao24, aircraft.registration, _utc(time), _utc(begin), _utc(end),
+        icao24, aircraft.registration, _utc(time), _utc(begin), _utc(end),
     )
 
     client_id, client_secret = get_credentials(db)
-    try:
-        raw_flights = await opensky.fetch_flights(
-            aircraft.icao24, begin, end, client_id, client_secret
-        )
-    except opensky.OpenSkyError as exc:
-        logger.warning(
-            "Discovery failed for icao24=%s: %s", aircraft.icao24, exc.message
-        )
-        raise HTTPException(status_code=exc.status_code, detail=exc.message)
 
-    existing = list(
-        db.scalars(select(Flight).where(Flight.aircraft_id == aircraft_id))
+    # /tracks/all probe at the middle of each 2-hour slot across the window.
+    slot_times: list[int] = []
+    t = begin + TRACKS_SLOT_S // 2
+    while t < end:
+        slot_times.append(t)
+        t += TRACKS_SLOT_S
+
+    # --- Query all three sources in parallel ---
+    hist_res, state_res, tracks_res = await asyncio.gather(
+        opensky.fetch_flights(icao24, begin, end, client_id, client_secret),
+        opensky.fetch_state(icao24, client_id, client_secret),
+        opensky.fetch_tracks_for_window(icao24, slot_times, client_id, client_secret),
+        return_exceptions=True,
     )
 
+    # Historical is the primary source — fail the request if it errored.
+    if isinstance(hist_res, opensky.OpenSkyError):
+        logger.warning("Discovery failed for icao24=%s: %s", icao24, hist_res.message)
+        raise HTTPException(status_code=hist_res.status_code, detail=hist_res.message)
+    if isinstance(hist_res, Exception):
+        raise hist_res
+    raw_flights = hist_res or []
+    # Live + tracks are best-effort enrichments.
+    state = None if isinstance(state_res, Exception) else state_res
+    window_tracks = [] if isinstance(tracks_res, Exception) else (tracks_res or [])
+
     now = int(time_module.time())
-    results: list[DiscoveredFlight] = []
-    matched_log: list[str] = []
+
+    def _track_window(tr: dict) -> tuple[int, int]:
+        path = tr.get("path") or []
+        s = int(tr.get("startTime") or (path[0][0] if path else 0))
+        e = int(tr.get("endTime") or (path[-1][0] if path else 0))
+        return s, e
+
+    # 1) Historical candidates (priority).
+    historical: list[dict] = []
     for fl in raw_flights:
         first = int(fl.get("firstSeen") or 0)
         last_raw = fl.get("lastSeen")
         last = int(last_raw or 0)
-        # Ongoing flight: no arrival time yet, or an arrival time in the future.
-        live = last_raw in (None, 0) or last > now
+        is_live = last_raw in (None, 0) or last > now
+        historical.append({
+            "first": first, "last": last,
+            "callsign": (fl.get("callsign") or "").strip() or None,
+            "dep": fl.get("estDepartureAirport"),
+            "arr": fl.get("estArrivalAirport"),
+            "live": is_live, "source": "historical",
+        })
 
-        # A discovered flight is "already logged" if an existing flight departed
-        # at (about) the same moment. query_time is exactly the firstSeen used
-        # when the flight was added via discovery (precise match); start_time is
-        # a track-derived fallback for any other origin.
+    # 2) Live candidate from the current state vector.
+    live_cand: dict | None = None
+    if state and state.get("last_contact") and begin <= state["last_contact"] <= end:
+        lc = int(state["last_contact"])
+        # Prefer a probed track that covers 'now' for an accurate departure time.
+        dep_ts = arr_ts = None
+        for tr in window_tracks:
+            s, e = _track_window(tr)
+            if s and s - MATCH_TOLERANCE_S <= lc <= e + MATCH_TOLERANCE_S:
+                dep_ts, arr_ts = s, e
+                break
+        if not state["on_ground"]:
+            # Airborne — ongoing flight, no arrival yet.
+            live_cand = {
+                "first": dep_ts if dep_ts else lc - ESTIMATED_FLIGHT_S,
+                "last": 0, "callsign": None, "dep": None, "arr": None,
+                "live": True, "source": "live",
+            }
+        else:
+            # Just landed — full track may still be processing.
+            live_cand = {
+                "first": dep_ts if dep_ts else lc - ESTIMATED_FLIGHT_S,
+                "last": arr_ts if arr_ts else lc,
+                "callsign": None, "dep": None, "arr": None,
+                "live": False, "source": "live",
+            }
+
+    # 3) Track candidates (limbo flights surfaced by the probes).
+    track_cands: list[dict] = []
+    for tr in window_tracks:
+        s, e = _track_window(tr)
+        if not s:
+            continue
+        track_cands.append({
+            "first": s, "last": e,
+            "callsign": (tr.get("callsign") or "").strip() or None,
+            "dep": None, "arr": None, "live": False, "source": "tracks",
+        })
+
+    # --- Merge: historical first; tracks only if not overlapping; live always ---
+    merged: list[dict] = list(historical)
+    for c in track_cands:
+        if any(
+            _windows_overlap(c["first"], c["last"], m["first"], m["last"])
+            for m in merged
+        ):
+            continue
+        if live_cand and _windows_overlap(
+            c["first"], c["last"], live_cand["first"], live_cand["last"]
+        ):
+            continue
+        merged.append(c)
+    if live_cand:
+        merged.append(live_cand)  # always shown, never de-duplicated away
+
+    # --- Build response + already-logged detection (unchanged matching) ---
+    existing = list(
+        db.scalars(select(Flight).where(Flight.aircraft_id == aircraft_id))
+    )
+    results: list[DiscoveredFlight] = []
+    already_n = 0
+    for c in merged:
+        first, last = c["first"], c["last"]
         logged_id = None
         for ex in existing:
             if first and (
@@ -140,32 +245,39 @@ async def discover_flights(
             ):
                 logged_id = ex.id
                 break
-
         if logged_id is not None:
-            matched_log.append(f"firstSeen={_utc(first)}->flight#{logged_id}")
-
+            already_n += 1
         results.append(
             DiscoveredFlight(
-                icao24=(fl.get("icao24") or aircraft.icao24),
+                icao24=icao24,
                 first_seen=first,
                 last_seen=last,
-                duration_s=max(0, last - first) if not live else 0,
-                callsign=(fl.get("callsign") or "").strip() or None,
-                est_departure_airport=fl.get("estDepartureAirport"),
-                est_arrival_airport=fl.get("estArrivalAirport"),
+                duration_s=(max(0, last - first) if (not c["live"] and last) else 0),
+                callsign=c["callsign"],
+                est_departure_airport=c["dep"],
+                est_arrival_airport=c["arr"],
                 already_logged=logged_id is not None,
                 logged_flight_id=logged_id,
-                live=live,
+                live=c["live"],
+                source=c["source"],
             )
         )
 
-    logger.info(
-        "Discovery result: icao24=%s flights_returned=%d already_logged=%d %s",
-        aircraft.icao24, len(results), len(matched_log),
-        ("[" + ", ".join(matched_log) + "]") if matched_log else "",
-    )
+    results.sort(key=lambda r: r.first_seen, reverse=True)
 
-    results.sort(key=lambda r: r.first_seen)
+    logger.info(
+        "Discovery result: icao24=%s historical=%d live=%d tracks=%d merged=%d "
+        "already_logged=%d",
+        icao24, len(historical), (1 if live_cand else 0), len(track_cands),
+        len(results), already_n,
+    )
+    for r in results:
+        logger.info(
+            "  dep=%s arr=%s source=%s live=%s already_logged=%s",
+            _utc(r.first_seen), _utc(r.last_seen) if r.last_seen else "—",
+            r.source, r.live, r.already_logged,
+        )
+
     return results
 
 

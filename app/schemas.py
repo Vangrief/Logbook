@@ -71,6 +71,8 @@ class DiscoveredFlight(BaseModel):
     logged_flight_id: int | None = None
     # Ongoing flight (no arrival time yet) — offer "Track Live".
     live: bool = False
+    # Where this candidate came from: historical / live / tracks.
+    source: str = "historical"
 
 
 class FlightSummary(BaseModel):
