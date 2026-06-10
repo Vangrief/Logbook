@@ -1,6 +1,6 @@
 """Flight endpoints: create from OpenSky, list, detail, notes, delete."""
 import json
-import time
+import time as time_module
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -97,7 +97,7 @@ async def discover_flights(
         db.scalars(select(Flight).where(Flight.aircraft_id == aircraft_id))
     )
 
-    now = int(time.time())
+    now = int(time_module.time())
     results: list[DiscoveredFlight] = []
     for fl in raw_flights:
         first = int(fl.get("firstSeen") or 0)
