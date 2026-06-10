@@ -228,7 +228,7 @@ function flightRow(f) {
         <span>${U.esc(f.registration || "—")}</span>
       </div>
       <div class="meta">
-        <div class="date">${U.fmtDate(f.start_time)} · ${U.fmtTime(f.start_time)}–${U.fmtTime(f.end_time)}
+        <div class="date">${U.fmtDate(f.start_time)} · ${U.fmtZoned(f.start_time, "Europe/Zurich")}–${U.fmtZoned(f.end_time, "Europe/Zurich")}<span class="z">ZRH</span>
           ${f.callsign ? `· <span class="cs">${U.esc(f.callsign)}</span>` : ""}</div>
         <div class="notes">${notes}</div>
         <div class="model">${U.esc(f.aircraft_model || "")}</div>

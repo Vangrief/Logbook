@@ -557,6 +557,14 @@ input[type="color"] { padding: 4px; height: 42px; cursor: pointer; }
   color: var(--text);
 }
 .flight-row .meta .date .cs { color: var(--text-soft); }
+/* "ZRH" timezone label after the row time range — matches the discovery table. */
+.flight-row .meta .date .z {
+  font-family: var(--sans);
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--text-faint);
+  margin-left: 5px;
+}
 .flight-row .meta .notes {
   font-size: 13px;
   color: var(--text-dim);
