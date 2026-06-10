@@ -1,5 +1,6 @@
 """Flight endpoints: create from OpenSky, list, detail, notes, delete."""
 import json
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -13,14 +14,15 @@ from ..schemas import (
     FlightCreate,
     FlightDetail,
     FlightNotesUpdate,
+    FlightPatch,
     FlightSummary,
 )
+from ..settings_store import get_credentials
 
 # ±6 hour default search window for flight discovery.
 DISCOVERY_WINDOW_S = 6 * 3600
 # Tolerance when matching a discovered flight to an already-saved one.
 MATCH_TOLERANCE_S = 600
-from ..settings_store import get_credentials
 
 router = APIRouter(prefix="/api/flights", tags=["flights"])
 
@@ -33,6 +35,7 @@ def _to_summary(flight: Flight) -> FlightSummary:
         summary.aircraft_model = ac.model
         summary.nickname = ac.nickname
         summary.color = ac.color
+        summary.icao24 = ac.icao24
     return summary
 
 
@@ -94,10 +97,14 @@ async def discover_flights(
         db.scalars(select(Flight).where(Flight.aircraft_id == aircraft_id))
     )
 
+    now = int(time.time())
     results: list[DiscoveredFlight] = []
     for fl in raw_flights:
         first = int(fl.get("firstSeen") or 0)
-        last = int(fl.get("lastSeen") or 0)
+        last_raw = fl.get("lastSeen")
+        last = int(last_raw or 0)
+        # Ongoing flight: no arrival time yet, or an arrival time in the future.
+        live = last_raw in (None, 0) or last > now
 
         logged_id = None
         for ex in existing:
@@ -110,12 +117,13 @@ async def discover_flights(
                 icao24=(fl.get("icao24") or aircraft.icao24),
                 first_seen=first,
                 last_seen=last,
-                duration_s=max(0, last - first),
+                duration_s=max(0, last - first) if not live else 0,
                 callsign=(fl.get("callsign") or "").strip() or None,
                 est_departure_airport=fl.get("estDepartureAirport"),
                 est_arrival_airport=fl.get("estArrivalAirport"),
                 already_logged=logged_id is not None,
                 logged_flight_id=logged_id,
+                live=live,
             )
         )
 
@@ -153,6 +161,7 @@ async def create_flight(payload: FlightCreate, db: Session = Depends(get_db)):
         callsign=(track.get("callsign") or "").strip() or None,
         raw_track=json.dumps(track),
         notes=payload.notes or "",
+        is_live=payload.live,
         **computed,
     )
     db.add(flight)
@@ -163,6 +172,64 @@ async def create_flight(payload: FlightCreate, db: Session = Depends(get_db)):
         **_to_summary(flight).model_dump(),
         query_time=flight.query_time,
         track=track.get("path", []),
+    )
+
+
+@router.patch("/{flight_id}", response_model=FlightDetail)
+async def patch_flight(
+    flight_id: int, payload: FlightPatch, db: Session = Depends(get_db)
+):
+    """Incremental live-tracking update: append a point, or finalize the flight."""
+    flight = db.get(Flight, flight_id)
+    if flight is None:
+        raise HTTPException(status_code=404, detail="Flight not found")
+
+    raw = json.loads(flight.raw_track)
+    path = raw.get("path") or []
+
+    if payload.finalize:
+        # Landing detected — pull the full, authoritative track from OpenSky.
+        flight.is_live = False
+        aircraft = flight.aircraft
+        client_id, client_secret = get_credentials(db)
+        try:
+            full = await opensky.fetch_track(
+                aircraft.icao24, flight.query_time, client_id, client_secret
+            )
+            if full and full.get("path"):
+                raw = full
+                path = full.get("path") or path
+        except opensky.OpenSkyError:
+            # Keep the incrementally-built track if the final fetch fails.
+            pass
+
+    if payload.append_point is not None:
+        p = payload.append_point
+        last_t = path[-1][0] if path else None
+        # Only append a genuinely newer fix (avoid duplicates).
+        if p and p[0] is not None and (last_t is None or p[0] > last_t):
+            path.append(p)
+        raw["path"] = path
+
+    if payload.end_time is not None:
+        flight.end_time = payload.end_time
+
+    # Recompute window + stats from the current path.
+    raw.setdefault("startTime", flight.start_time)
+    if path:
+        raw["endTime"] = path[-1][0]
+        flight.end_time = int(path[-1][0])
+    for key, value in stats.compute(raw).items():
+        setattr(flight, key, value)
+    flight.raw_track = json.dumps(raw)
+
+    db.commit()
+    db.refresh(flight)
+
+    return FlightDetail(
+        **_to_summary(flight).model_dump(),
+        query_time=flight.query_time,
+        track=raw.get("path", []),
     )
 
 

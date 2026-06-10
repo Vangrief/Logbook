@@ -2,6 +2,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     Float,
     ForeignKey,
     Integer,
@@ -57,6 +58,11 @@ class Flight(Base):
 
     notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    # True while the flight is still airborne and being tracked live.
+    is_live: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
 
     aircraft: Mapped["Aircraft"] = relationship(back_populates="flights")
 

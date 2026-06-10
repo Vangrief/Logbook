@@ -7,7 +7,15 @@ from fastapi.staticfiles import StaticFiles
 
 from . import auth
 from .database import Base, SessionLocal, engine
-from .routers import airports, aircraft, auth as auth_router, flights, settings, stats
+from .routers import (
+    airports,
+    aircraft,
+    auth as auth_router,
+    flights,
+    live,
+    settings,
+    stats,
+)
 from .seed import seed
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -27,9 +35,20 @@ PUBLIC_PATHS = {"/login", "/api/login", "/api/logout", "/api/health"}
 app = FastAPI(title="Logbook", version="1.0.0")
 
 
+def _migrate(conn) -> None:
+    """Lightweight additive migrations for existing SQLite databases."""
+    cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(flights)")]
+    if "is_live" not in cols:
+        conn.exec_driver_sql(
+            "ALTER TABLE flights ADD COLUMN is_live BOOLEAN NOT NULL DEFAULT 0"
+        )
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     Base.metadata.create_all(bind=engine)
+    with engine.begin() as conn:
+        _migrate(conn)
     db = SessionLocal()
     try:
         seed(db)
@@ -65,6 +84,7 @@ app.include_router(flights.router)
 app.include_router(settings.router)
 app.include_router(stats.router)
 app.include_router(airports.router)
+app.include_router(live.router)
 
 
 @app.get("/api/health")

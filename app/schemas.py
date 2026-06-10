@@ -38,10 +38,22 @@ class FlightCreate(BaseModel):
     # Unix timestamp (seconds, UTC) sometime DURING the flight.
     time: int
     notes: str = ""
+    # Mark the flight as ongoing so the detail page enters live mode.
+    live: bool = False
 
 
 class FlightNotesUpdate(BaseModel):
     notes: str
+
+
+class FlightPatch(BaseModel):
+    """Incremental update used by live tracking."""
+
+    # A single new track point: [time, lat, lon, baro_alt_m, heading, on_ground]
+    append_point: list | None = None
+    end_time: int | None = None
+    # When true, re-fetch the full track from OpenSky and close the flight out.
+    finalize: bool = False
 
 
 class DiscoveredFlight(BaseModel):
@@ -57,6 +69,8 @@ class DiscoveredFlight(BaseModel):
     # Whether this flight is already stored locally, and its id if so.
     already_logged: bool = False
     logged_flight_id: int | None = None
+    # Ongoing flight (no arrival time yet) — offer "Track Live".
+    live: bool = False
 
 
 class FlightSummary(BaseModel):
@@ -74,12 +88,14 @@ class FlightSummary(BaseModel):
     max_speed_kt: float
     avg_speed_kt: float
     notes: str
+    is_live: bool = False
 
     # Joined aircraft fields, populated in the router.
     registration: str | None = None
     aircraft_model: str | None = None
     nickname: str | None = None
     color: str | None = None
+    icao24: str | None = None
 
 
 class FlightDetail(FlightSummary):

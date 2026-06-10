@@ -188,3 +188,79 @@ async def fetch_flights(
 
     data = resp.json()
     return data or []
+
+
+async def fetch_state(
+    icao24: str, client_id: str, client_secret: str, max_age_s: int = 60
+) -> dict | None:
+    """Current state vector for `icao24` via /states/all.
+
+    Returns a normalised dict (lat/lon/altitude_m/velocity_mps/heading/
+    on_ground/last_contact) or None when the aircraft is not found or the data
+    is stale (last contact older than `max_age_s`).
+    """
+    icao24 = icao24.strip().lower()
+
+    if not client_id or not client_secret:
+        raise OpenSkyError(
+            "OpenSky API credentials are not configured. Add them in Settings.",
+            400,
+        )
+
+    async def _do_request(token: str) -> httpx.Response:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            return await client.get(
+                f"{API_BASE}/states/all",
+                params={"icao24": icao24},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    token = await _get_token(client_id, client_secret)
+    try:
+        resp = await _do_request(token)
+        if resp.status_code == 401:
+            token = await _get_token(client_id, client_secret, force=True)
+            resp = await _do_request(token)
+    except httpx.RequestError as exc:
+        raise OpenSkyError(f"Could not reach OpenSky API: {exc}") from exc
+
+    if resp.status_code == 401:
+        raise OpenSkyError("OpenSky authentication failed (401).", 401)
+    if resp.status_code == 429:
+        raise OpenSkyError(
+            "OpenSky rate limit reached (429). Please wait and try again.", 429
+        )
+    if resp.status_code == 404:
+        return None
+    if resp.status_code != 200:
+        raise OpenSkyError(f"OpenSky API error ({resp.status_code}).", 502)
+    if not resp.text or not resp.text.strip():
+        return None
+
+    data = resp.json()
+    states = data.get("states") or []
+    if not states:
+        return None
+
+    # State vector layout (OpenSky /states/all):
+    # 0 icao24, 4 last_contact, 5 lon, 6 lat, 7 baro_alt, 8 on_ground,
+    # 9 velocity, 10 true_track, 13 geo_alt
+    row = states[0]
+    last_contact = row[4]
+    lat, lon = row[6], row[5]
+    if last_contact is None or lat is None or lon is None:
+        return None
+
+    server_time = data.get("time") or int(time.time())
+    if server_time - last_contact > max_age_s:
+        return None  # stale
+
+    return {
+        "lat": lat,
+        "lon": lon,
+        "altitude_m": row[7] if row[7] is not None else row[13],
+        "velocity_mps": row[9],
+        "heading": row[10],
+        "on_ground": bool(row[8]),
+        "last_contact": int(last_contact),
+    }

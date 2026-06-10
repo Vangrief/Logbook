@@ -18,6 +18,9 @@ const routes = [
 
 function router() {
   const hash = window.location.hash || "#/flights";
+  // Stop live polling whenever the route changes (the detail handler restarts
+  // it if the opened flight is live).
+  stopLive();
   setActiveNav(hash);
   for (const r of routes) {
     const m = hash.match(r.re);
@@ -276,6 +279,17 @@ async function renderDetail(id) {
       <div class="map-wrap">
         <div id="map"></div>
 
+        <div class="replay-stats live-stats" id="live-stats" hidden>
+          <div class="live-head">
+            <span class="live-badge"><span class="live-dot"></span>LIVE</span>
+            <span class="live-ago" id="live-ago">updating…</span>
+          </div>
+          <div class="rs-item"><span class="rs-l">ALT</span><span class="rs-v" id="lv-alt">—</span></div>
+          <div class="rs-item"><span class="rs-l">SPD</span><span class="rs-v" id="lv-spd">—</span></div>
+          <div class="rs-item"><span class="rs-l">HDG</span><span class="rs-v" id="lv-hdg">—</span></div>
+          <div class="rs-item"><span class="rs-l">TIME</span><span class="rs-v" id="lv-time">—</span></div>
+        </div>
+
         <div class="replay-stats" id="replay-stats" hidden>
           <div class="rs-item"><span class="rs-l">ALT</span><span class="rs-v" id="rs-alt">—</span></div>
           <div class="rs-item"><span class="rs-l">SPD</span><span class="rs-v" id="rs-spd">—</span></div>
@@ -349,8 +363,19 @@ async function renderDetail(id) {
     else enterReplay(f);
   };
 
-  drawMap(f);
+  const live = isFlightLive(f);
+  // Replay doesn't make sense while a flight is still being tracked live.
+  if (live) document.getElementById("replay-btn").style.display = "none";
+
+  drawMap(f, { showLanding: !live });
   drawAltChart(f);
+
+  if (live) startLive(f);
+}
+
+// A flight is live if the backend flagged it, or its arrival is in the future.
+function isFlightLive(f) {
+  return !!f.is_live || (!!f.end_time && f.end_time * 1000 > Date.now());
 }
 
 function statTile(label, value, unit) {
@@ -363,9 +388,46 @@ function statTile(label, value, unit) {
 /* ---- Leaflet map with gradient track ---- */
 let mapInstance = null;
 let staticTrackLayer = null;
-function drawMap(f) {
-  // Tear down any replay session before the map is recreated.
+
+// (Re)build the green->amber->red gradient track + endpoint markers into
+// staticTrackLayer. Reused for the initial render and for live updates.
+function _renderStaticTrack(map, path, showLanding = true) {
+  if (staticTrackLayer) map.removeLayer(staticTrackLayer);
+  staticTrackLayer = L.layerGroup().addTo(map);
+
+  const latlngs = path.map((p) => [p[1], p[2]]);
+  for (let i = 0; i < latlngs.length - 1; i++) {
+    const t = i / (latlngs.length - 1);
+    L.polyline([latlngs[i], latlngs[i + 1]], {
+      color: U.gradientColor(t),
+      weight: 4,
+      opacity: 0.95,
+      lineCap: "round",
+    }).addTo(staticTrackLayer);
+  }
+
+  const mk = (latlng, color, label) =>
+    L.circleMarker(latlng, {
+      radius: 7,
+      color: "#0d0d0d",
+      weight: 2,
+      fillColor: color,
+      fillOpacity: 1,
+    })
+      .addTo(staticTrackLayer)
+      .bindTooltip(label, { permanent: false, direction: "top" });
+
+  if (latlngs.length) mk(latlngs[0], "#f4a7b9", "Takeoff");
+  if (showLanding && latlngs.length > 1) {
+    mk(latlngs[latlngs.length - 1], "#e63946", "Landing");
+  }
+  return latlngs;
+}
+
+function drawMap(f, opts = {}) {
+  // Tear down any replay/live session before the map is recreated.
   stopReplay();
+  stopLive();
   if (mapInstance) { mapInstance.remove(); mapInstance = null; }
   staticTrackLayer = null;
 
@@ -394,36 +456,7 @@ function drawMap(f) {
     return;
   }
 
-  // Static track grouped so replay mode can hide/restore it in one go.
-  staticTrackLayer = L.layerGroup().addTo(map);
-
-  // Gradient: one short polyline per segment, colored green->amber->red.
-  const latlngs = path.map((p) => [p[1], p[2]]);
-  for (let i = 0; i < latlngs.length - 1; i++) {
-    const t = i / (latlngs.length - 1);
-    L.polyline([latlngs[i], latlngs[i + 1]], {
-      color: U.gradientColor(t),
-      weight: 4,
-      opacity: 0.95,
-      lineCap: "round",
-    }).addTo(staticTrackLayer);
-  }
-
-  // Takeoff / landing markers.
-  const mk = (latlng, color, label) =>
-    L.circleMarker(latlng, {
-      radius: 7,
-      color: "#0d0d0d",
-      weight: 2,
-      fillColor: color,
-      fillOpacity: 1,
-    })
-      .addTo(staticTrackLayer)
-      .bindTooltip(label, { permanent: false, direction: "top" });
-
-  mk(latlngs[0], "#f4a7b9", "Takeoff");
-  mk(latlngs[latlngs.length - 1], "#e63946", "Landing");
-
+  const latlngs = _renderStaticTrack(map, path, opts.showLanding !== false);
   map.fitBounds(L.latLngBounds(latlngs), { padding: [30, 30] });
 }
 
@@ -802,6 +835,184 @@ function _replayRender() {
 }
 
 /* ============================================================
+   LIVE TRACKING
+   ============================================================ */
+let liveSession = null;
+const LIVE_POLL_MS = 10000;
+
+function stopLive() {
+  if (!liveSession) return;
+  clearInterval(liveSession.pollTimer);
+  clearInterval(liveSession.tickTimer);
+  if (mapInstance && liveSession.marker) {
+    try { mapInstance.removeLayer(liveSession.marker); } catch (_) {}
+  }
+  const overlay = document.getElementById("live-stats");
+  if (overlay) overlay.hidden = true;
+  liveSession = null;
+}
+
+function startLive(f) {
+  if (!mapInstance || !f.icao24) return;
+
+  const overlay = document.getElementById("live-stats");
+  if (overlay) overlay.hidden = false;
+
+  liveSession = {
+    flightId: f.id,
+    icao24: f.icao24,
+    marker: null,
+    iconInner: null,
+    displayHeading: null,
+    lastUpdate: Date.now(),
+    pollTimer: null,
+    tickTimer: null,
+    busy: false,
+  };
+
+  // "updated Xs ago" counter ticks every second.
+  liveSession.tickTimer = setInterval(_liveTick, 1000);
+  _liveTick();
+
+  // Poll immediately, then every 10s.
+  _livePoll();
+  liveSession.pollTimer = setInterval(_livePoll, LIVE_POLL_MS);
+}
+
+function _liveTick() {
+  if (!liveSession) return;
+  const ago = Math.round((Date.now() - liveSession.lastUpdate) / 1000);
+  const el = document.getElementById("live-ago");
+  if (el) el.textContent = `updated ${ago}s ago`;
+}
+
+async function _livePoll() {
+  if (!liveSession || liveSession.busy) return;
+  liveSession.busy = true;
+  const session = liveSession;
+  try {
+    let state;
+    try {
+      state = await API.getLive(session.icao24);
+    } catch (_) {
+      return; // transient error (network/credentials) — retry next cycle
+    }
+    if (!liveSession || liveSession !== session) return; // navigated away
+
+    if (state === null) {
+      // No fresh state this cycle — keep waiting.
+      return;
+    }
+
+    if (state.on_ground) {
+      await _liveFinish(session);
+      return;
+    }
+
+    // Append the new airborne fix and refresh the map/stats from the result.
+    const point = [
+      state.last_contact,
+      state.lat,
+      state.lon,
+      state.altitude_m,
+      state.heading,
+      false,
+    ];
+    let updated;
+    try {
+      updated = await API.patchFlight(session.flightId, { append_point: point });
+    } catch (_) {
+      updated = null;
+    }
+    if (!liveSession || liveSession !== session) return;
+
+    if (updated) _liveRedraw(updated);
+    _liveUpdateMarker(state);
+    _liveUpdateStats(state);
+    session.lastUpdate = Date.now();
+    _liveTick();
+  } finally {
+    if (liveSession === session) session.busy = false;
+  }
+}
+
+function _liveRedraw(flight) {
+  const path = (flight.track || []).filter((p) => p[1] !== null && p[2] !== null);
+  if (mapInstance && path.length) {
+    _renderStaticTrack(mapInstance, path, false); // no landing marker while live
+  }
+  // Refresh the header stat tiles in place.
+  const grid = document.querySelector(".detail-grid .stat-grid");
+  if (grid) {
+    grid.innerHTML =
+      statTile("Duration", U.fmtDuration(flight.duration_s), "") +
+      statTile("Distance", U.num(flight.distance_km, 1), "km") +
+      statTile("Max Alt", U.num(flight.max_altitude_ft), "ft") +
+      statTile("Avg Alt", U.num(flight.avg_altitude_ft), "ft") +
+      statTile("Max Speed", U.num(flight.max_speed_kt), "kt") +
+      statTile("Avg Speed", U.num(flight.avg_speed_kt), "kt");
+  }
+}
+
+function _liveUpdateMarker(state) {
+  if (!mapInstance) return;
+  const latlng = [state.lat, state.lon];
+  if (!liveSession.marker) {
+    liveSession.marker = L.marker(latlng, {
+      icon: _aircraftIcon(),
+      interactive: false,
+      keyboard: false,
+      zIndexOffset: 1000,
+    }).addTo(mapInstance);
+  } else {
+    liveSession.marker.setLatLng(latlng);
+  }
+  if (!liveSession.iconInner && liveSession.marker.getElement()) {
+    liveSession.iconInner = liveSession.marker.getElement().querySelector(".ac-inner");
+  }
+  // Keep the aircraft in view without constantly re-zooming.
+  if (!mapInstance.getBounds().pad(-0.15).contains(latlng)) {
+    mapInstance.panTo(latlng, { animate: true });
+  }
+  // Shortest-path heading (kept continuous so CSS never spins the long way).
+  const hdg = state.heading != null ? state.heading : 0;
+  if (liveSession.displayHeading === null) {
+    liveSession.displayHeading = hdg;
+  } else {
+    const d = (((hdg - liveSession.displayHeading) % 360) + 540) % 360 - 180;
+    liveSession.displayHeading += d;
+  }
+  if (liveSession.iconInner) {
+    liveSession.iconInner.style.transform = `rotate(${liveSession.displayHeading}deg)`;
+  }
+}
+
+function _liveUpdateStats(state) {
+  const altft = state.altitude_m != null ? Math.round(state.altitude_m * M_TO_FT) : null;
+  const spdkt = state.velocity_mps != null ? Math.round(state.velocity_mps * MS_TO_KT) : null;
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set("lv-alt", altft != null ? `${U.num(altft)} ft` : "—");
+  set("lv-spd", spdkt != null ? `${U.num(spdkt)} kt` : "—");
+  set("lv-hdg", state.heading != null ? `${String(Math.round(state.heading)).padStart(3, "0")}°` : "—");
+  set("lv-time", _utcClockFmt.format(new Date()));
+}
+
+async function _liveFinish(session) {
+  // Landing detected — pull the complete final track and exit live mode.
+  try {
+    await API.patchFlight(session.flightId, { finalize: true });
+  } catch (_) {
+    /* finalize best-effort */
+  }
+  if (liveSession !== session) return;
+  const id = session.flightId;
+  stopLive();
+  U.toast("Flight complete — track saved", "success");
+  // Re-render the detail with the final, complete track (no live mode now).
+  if (window.location.hash === `#/flights/${id}`) renderDetail(id);
+}
+
+/* ============================================================
    MANUAL FLIGHT ENTRY
    ============================================================ */
 async function renderNew() {
@@ -942,14 +1153,22 @@ function drawDiscovery(flights, ts, aircraftId) {
 
   const rows = flights
     .map((fl) => {
-      const match = ts >= fl.first_seen && ts <= fl.last_seen;
-      const action = fl.already_logged
-        ? `<button class="btn btn-sm btn-ghost" disabled>Already logged</button>`
-        : `<button class="btn btn-sm btn-primary" data-add="${fl.first_seen}">Add</button>`;
+      const match = !fl.live && ts >= fl.first_seen && ts <= fl.last_seen;
+      const arrival = fl.live
+        ? `<span class="live-badge"><span class="live-dot"></span>LIVE</span>`
+        : zoneCell(fl.last_seen);
+      let action;
+      if (fl.already_logged) {
+        action = `<button class="btn btn-sm btn-ghost" disabled>Already logged</button>`;
+      } else if (fl.live) {
+        action = `<button class="btn btn-sm btn-primary" data-add="${fl.first_seen}" data-live="1">Track Live</button>`;
+      } else {
+        action = `<button class="btn btn-sm btn-primary" data-add="${fl.first_seen}">Add</button>`;
+      }
       return `<tr class="${match ? "row-match" : ""}">
         <td>${zoneCell(fl.first_seen)}${match ? `<span class="match-tag">your time</span>` : ""}</td>
-        <td>${zoneCell(fl.last_seen)}</td>
-        <td>${U.fmtDuration(fl.duration_s)}</td>
+        <td>${arrival}</td>
+        <td>${fl.live ? "—" : U.fmtDuration(fl.duration_s)}</td>
         <td>${fl.callsign ? U.esc(fl.callsign) : "—"}</td>
         <td style="text-align:right;white-space:nowrap">${action}</td>
       </tr>`;
@@ -978,10 +1197,11 @@ function drawDiscovery(flights, ts, aircraftId) {
 
 async function addDiscoveredFlight(btn, aircraftId, firstSeen) {
   const notes = document.getElementById("n-notes").value;
+  const live = btn.dataset.live === "1";
   const addButtons = document.querySelectorAll("#discovery [data-add]");
   addButtons.forEach((b) => (b.disabled = true));
   const original = btn.innerHTML;
-  btn.innerHTML = `<span class="spinner"></span> Fetching…`;
+  btn.innerHTML = `<span class="spinner"></span> ${live ? "Starting…" : "Fetching…"}`;
 
   try {
     // Use the departure timestamp so /tracks/all resolves this exact flight.
@@ -989,8 +1209,9 @@ async function addDiscoveredFlight(btn, aircraftId, firstSeen) {
       aircraft_id: aircraftId,
       time: firstSeen,
       notes,
+      live,
     });
-    U.toast("Flight archived", "success");
+    U.toast(live ? "Tracking live" : "Flight archived", "success");
     window.location.hash = `#/flights/${flight.id}`;
   } catch (e) {
     U.toast(e.message, "error");
