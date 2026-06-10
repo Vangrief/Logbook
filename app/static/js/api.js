@@ -73,6 +73,10 @@ const API = (() => {
     // Airports
     getAirports: () => request("GET", "/api/airports"),
 
+    // Heatmap
+    getHeatmap: (aircraftId) =>
+      request("GET", `/api/heatmap${aircraftId ? `?aircraft_id=${aircraftId}` : ""}`),
+
     // Auth — logout uses a plain fetch so it is never caught by the 401
     // intercept above (which would otherwise risk a redirect loop).
     logout: () => fetch("/api/logout", { method: "POST" }),

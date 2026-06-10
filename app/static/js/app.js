@@ -13,6 +13,7 @@ const routes = [
   { re: /^#\/new$/, handler: renderNew },
   { re: /^#\/stats$/, handler: renderStats },
   { re: /^#\/airports$/, handler: renderAirports },
+  { re: /^#\/heatmap$/, handler: renderHeatmap },
   { re: /^#\/settings$/, handler: renderSettings },
 ];
 
@@ -36,6 +37,8 @@ function setActiveNav(hash) {
     ? "stats"
     : hash.startsWith("#/airports")
     ? "airports"
+    : hash.startsWith("#/heatmap")
+    ? "heatmap"
     : hash.startsWith("#/settings")
     ? "settings"
     : "flights";
@@ -1561,6 +1564,163 @@ async function onAirportPopupOpen(e, ap) {
 }
 
 /* ============================================================
+   HEATMAP
+   ============================================================ */
+let heatmapMap = null;
+
+async function renderHeatmap() {
+  if (heatmapMap) {
+    try { heatmapMap.remove(); } catch (_) {}
+    heatmapMap = null;
+  }
+  loading("Loading heatmap");
+
+  let data, aircraft;
+  try {
+    [data, aircraft] = await Promise.all([API.getHeatmap(), API.listAircraft()]);
+  } catch (e) {
+    view.innerHTML = errorBox(e.message);
+    return;
+  }
+
+  if (!data.flights.length) {
+    view.innerHTML = `<div class="empty" style="padding:90px 20px">
+      <div class="big">🔥</div>
+      <div>No flights logged yet</div>
+    </div>`;
+    return;
+  }
+
+  view.innerHTML = `<div id="heatmap-map"></div>`;
+
+  const light = document.body.classList.contains("light-mode");
+  const tileStyle = light ? "light_all" : "dark_all";
+  const map = L.map("heatmap-map", { zoomControl: false });
+  heatmapMap = map;
+  L.control.zoom({ position: "topright" }).addTo(map);
+  L.tileLayer(
+    `https://{s}.basemaps.cartocdn.com/${tileStyle}/{z}/{x}/{y}{r}.png`,
+    {
+      attribution:
+        "&copy; OpenStreetMap &copy; CARTO · tracks via OpenSky Network",
+      subdomains: "abcd",
+      maxZoom: 19,
+    }
+  ).addTo(map);
+
+  const state = {
+    aircraftId: "",
+    showMarkers: true,
+    trackLayer: null,
+    markerLayer: null,
+  };
+
+  // Overlaid controls panel (top-left).
+  const ctrl = L.control({ position: "topleft" });
+  ctrl.onAdd = () => {
+    const div = L.DomUtil.create("div", "airports-info heat-controls");
+    L.DomEvent.disableClickPropagation(div);
+    L.DomEvent.disableScrollPropagation(div);
+    div.innerHTML =
+      `<div class="ai-row"><span class="ai-val" id="heat-count">0</span> flights shown</div>` +
+      `<label class="heat-field"><span>Aircraft</span>` +
+      `<select id="heat-aircraft"><option value="">All aircraft</option>` +
+      aircraft
+        .map(
+          (a) =>
+            `<option value="${a.id}">${U.esc(a.registration)}${a.nickname ? " · " + U.esc(a.nickname) : ""}</option>`
+        )
+        .join("") +
+      `</select></label>` +
+      `<button class="btn btn-sm heat-toggle" id="heat-toggle" type="button">Show tracks only</button>`;
+    return div;
+  };
+  ctrl.addTo(map);
+
+  document.getElementById("heat-aircraft").onchange = (e) => {
+    state.aircraftId = e.target.value;
+    drawHeatTracks();
+  };
+  document.getElementById("heat-toggle").onclick = (e) => {
+    state.showMarkers = !state.showMarkers;
+    e.target.textContent = state.showMarkers ? "Show tracks only" : "Show all routes";
+    applyHeatMarkers();
+  };
+
+  function applyHeatMarkers() {
+    if (!state.markerLayer) return;
+    if (state.showMarkers) state.markerLayer.addTo(map);
+    else map.removeLayer(state.markerLayer);
+  }
+
+  function drawHeatTracks() {
+    if (state.trackLayer) map.removeLayer(state.trackLayer);
+    if (state.markerLayer) map.removeLayer(state.markerLayer);
+    state.trackLayer = L.layerGroup().addTo(map);
+    state.markerLayer = L.layerGroup();
+
+    const accent = cssVar("--amber");
+    const flights = state.aircraftId
+      ? data.flights.filter((f) => String(f.aircraft_id) === String(state.aircraftId))
+      : data.flights;
+
+    const allLatLngs = [];
+    const endpoints = new Map();
+
+    flights.forEach((f) => {
+      const pts = (f.track || [])
+        .filter((p) => p[1] !== null && p[2] !== null)
+        .map((p) => [p[1], p[2]]);
+      if (pts.length < 2) return;
+
+      pts.forEach((ll) => allLatLngs.push(ll));
+
+      const line = L.polyline(pts, {
+        color: accent,
+        weight: 3,
+        opacity: 0.2,
+        lineCap: "round",
+        lineJoin: "round",
+        className: "heat-track",
+      });
+      line.on("mouseover", () => { line.setStyle({ opacity: 0.85, weight: 5 }); line.bringToFront(); });
+      line.on("mouseout", () => { line.setStyle({ opacity: 0.2, weight: 3 }); });
+      line.on("click", () => { window.location.hash = `#/flights/${f.id}`; });
+      line.bindTooltip(
+        `<div class="heat-tip"><b>${U.fmtDate(f.date)}</b><br>` +
+        `${U.esc(f.registration || "—")} · ${U.fmtDuration(f.duration_s)}</div>`,
+        { sticky: true, direction: "top", className: "heat-tooltip" }
+      );
+      line.addTo(state.trackLayer);
+
+      [pts[0], pts[pts.length - 1]].forEach(([la, lo]) => {
+        const key = la.toFixed(2) + "," + lo.toFixed(2);
+        if (!endpoints.has(key)) endpoints.set(key, [la, lo]);
+      });
+    });
+
+    endpoints.forEach(([la, lo]) => {
+      L.circleMarker([la, lo], {
+        radius: 5,
+        color: "#ffffff",
+        weight: 1.5,
+        fillColor: accent,
+        fillOpacity: 0.9,
+      }).addTo(state.markerLayer);
+    });
+
+    applyHeatMarkers();
+    document.getElementById("heat-count").textContent = flights.length;
+
+    if (allLatLngs.length) {
+      map.fitBounds(L.latLngBounds(allLatLngs), { padding: [50, 50] });
+    }
+  }
+
+  drawHeatTracks();
+}
+
+/* ============================================================
    SETTINGS
    ============================================================ */
 async function renderSettings() {
@@ -1864,7 +2024,12 @@ function toggleTheme() {
   // Canvas/Leaflet content reads the theme at draw time, so rebuild views
   // that contain a map or charts to pick up the new palette.
   const hash = window.location.hash;
-  if (/^#\/flights\/\d+$/.test(hash) || hash === "#/stats" || hash === "#/airports") {
+  if (
+    /^#\/flights\/\d+$/.test(hash) ||
+    hash === "#/stats" ||
+    hash === "#/airports" ||
+    hash === "#/heatmap"
+  ) {
     router();
   }
 }

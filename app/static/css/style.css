@@ -1016,7 +1016,8 @@ input[type="color"] { padding: 4px; height: 42px; cursor: pointer; }
 .toast.success { border-color: rgba(var(--green-rgb), 0.5); }
 
 /* ---------- Airports map ---------- */
-#airports-map {
+#airports-map,
+#heatmap-map {
   height: calc(100vh - 150px);
   min-height: 420px;
   width: 100%;
@@ -1024,6 +1025,37 @@ input[type="color"] { padding: 4px; height: 42px; cursor: pointer; }
   border: 1px solid var(--border);
   z-index: 1;
 }
+
+/* Heatmap track hover — smooth opacity/width transition. */
+.heat-track { transition: stroke-opacity 0.15s, stroke-width 0.15s; }
+
+/* Heatmap controls panel (extends the airports info card). */
+.heat-controls { min-width: 170px; }
+.heat-controls .heat-field { display: block; margin: 10px 0 8px; }
+.heat-controls .heat-field > span {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+.heat-controls select { font-size: 13px; padding: 7px 9px; }
+.heat-controls .heat-toggle { width: 100%; justify-content: center; }
+
+/* Themed heatmap tooltip (scoped so other Leaflet tooltips are unaffected). */
+.leaflet-tooltip.heat-tooltip {
+  background: var(--bg-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--sans);
+  font-size: 12px;
+  box-shadow: 0 6px 20px -10px rgba(0, 0, 0, 0.6);
+}
+.leaflet-tooltip.heat-tooltip::before { border-top-color: var(--border); }
+.heat-tip b { font-family: var(--mono); color: var(--amber); }
 
 .airports-info {
   background: var(--bg-2);
