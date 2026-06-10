@@ -31,7 +31,14 @@ NO_STORE = {"Cache-Control": "no-store, must-revalidate"}
 # Paths reachable without a valid session: the login flow, health check and
 # static assets (the login page needs its stylesheet/fonts).
 PUBLIC_PREFIXES = ("/static",)
-PUBLIC_PATHS = {"/login", "/api/login", "/api/logout", "/api/health"}
+PUBLIC_PATHS = {
+    "/login",
+    "/api/login",
+    "/api/logout",
+    "/api/health",
+    "/sw.js",
+    "/manifest.json",
+}
 
 app = FastAPI(title="Logbook", version="1.0.0")
 
@@ -97,6 +104,24 @@ def health():
 # Serve the SPA. Static assets live under /static; every other path returns
 # index.html so client-side hash routing works on hard refresh.
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/sw.js")
+def service_worker():
+    # Served from root so the worker gets root scope (not /static).
+    return FileResponse(
+        os.path.join(STATIC_DIR, "sw.js"),
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"},
+    )
+
+
+@app.get("/manifest.json")
+def manifest():
+    return FileResponse(
+        os.path.join(STATIC_DIR, "manifest.json"),
+        media_type="application/manifest+json",
+    )
 
 
 @app.get("/login")
