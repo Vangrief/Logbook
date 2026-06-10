@@ -67,6 +67,7 @@ const API = (() => {
     // Settings
     getSettings: () => request("GET", "/api/settings"),
     updateSettings: (s) => request("PUT", "/api/settings", s),
+    getCesiumToken: () => request("GET", "/api/settings/cesium-token"),
 
     // Stats
     getStats: () => request("GET", "/api/stats"),

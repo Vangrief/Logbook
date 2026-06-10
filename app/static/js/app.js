@@ -22,6 +22,7 @@ function router() {
   // Stop live polling whenever the route changes (the detail handler restarts
   // it if the opened flight is live).
   stopLive();
+  cesium3d.cleanup();
   setActiveNav(hash);
   for (const r of routes) {
     const m = hash.match(r.re);
@@ -273,6 +274,7 @@ async function renderDetail(id) {
       </div>
       <div class="flex">
         <a class="btn btn-ghost" href="#/flights">‹ Back</a>
+        <button class="btn" id="threed-btn">🌐 3D</button>
         <button class="btn" id="replay-btn">▶ Replay</button>
         <button class="btn btn-danger" id="del-flight">Delete</button>
       </div>
@@ -281,6 +283,8 @@ async function renderDetail(id) {
     <div class="detail-grid">
       <div class="map-wrap">
         <div id="map"></div>
+        <div id="cesium-container" class="cesium-container" hidden></div>
+        <div id="cesium-overlays" class="cesium-overlays" hidden></div>
 
         <div class="replay-stats live-stats" id="live-stats" hidden>
           <div class="live-head">
@@ -370,6 +374,11 @@ async function renderDetail(id) {
   document.getElementById("replay-btn").onclick = () => {
     if (replay && replay.active) exitReplay();
     else enterReplay(f);
+  };
+
+  document.getElementById("threed-btn").onclick = () => {
+    if (cesium3d.active) cesium3d.exit();
+    else cesium3d.enter(f);
   };
 
   const live = isFlightLive(f);
@@ -1107,6 +1116,341 @@ async function _liveFinish(session) {
   // Re-render the detail with the final, complete track (no live mode now).
   if (window.location.hash === `#/flights/${id}`) renderDetail(id);
 }
+
+/* ============================================================
+   3D FLIGHT VIEWER (Cesium, lazy-loaded)
+   ============================================================ */
+const cesium3d = (() => {
+  const VERSION = "1.114";
+  const BASE = `https://cesium.com/downloads/cesiumjs/releases/${VERSION}/Build/Cesium/`;
+  let loadPromise = null;
+
+  const state = {
+    active: false,
+    viewer: null,
+    positionProperty: null,
+    aircraft: null,
+    playing: false,
+    speed: 50,
+    chase: true,
+    removeTick: null,
+  };
+
+  const $c = () => document.getElementById("cesium-container");
+  const $o = () => document.getElementById("cesium-overlays");
+
+  function loadCesium() {
+    if (window.Cesium) return Promise.resolve();
+    if (loadPromise) return loadPromise;
+    loadPromise = new Promise((resolve, reject) => {
+      const css = document.createElement("link");
+      css.rel = "stylesheet";
+      css.href = BASE + "Widgets/widgets.css";
+      document.head.appendChild(css);
+      const s = document.createElement("script");
+      s.src = BASE + "Cesium.js";
+      s.onload = () => resolve();
+      s.onerror = () => { loadPromise = null; reject(new Error("load failed")); };
+      document.head.appendChild(s);
+    });
+    return loadPromise;
+  }
+
+  function message(html) {
+    const o = $o();
+    if (!o) return;
+    o.hidden = false;
+    o.innerHTML = `<div class="cesium-msg">${html}</div>`;
+  }
+
+  async function enter(flight) {
+    if (state.active) return;
+    state.active = true;
+    document.getElementById("threed-btn").textContent = "◀ 2D";
+    if (replay && replay.active) exitReplay(); // close any 2D replay first
+
+    const mapEl = document.getElementById("map");
+    if (mapEl) mapEl.style.display = "none";
+    const c = $c();
+    c.hidden = false;
+    c.classList.add("fade-in");
+
+    let token = "";
+    try {
+      token = (await API.getCesiumToken()).token || "";
+    } catch (_) { /* fall through to message */ }
+    if (!state.active) return;
+
+    if (!token) {
+      message(
+        'Add your Cesium Ion token in <a href="#/settings">Settings</a> to enable 3D view.' +
+        '<div class="muted" style="margin-top:8px">Get a free account at ' +
+        '<a href="https://ion.cesium.com" target="_blank" rel="noopener">ion.cesium.com</a></div>'
+      );
+      return;
+    }
+
+    message('<span class="spinner"></span><div style="margin-top:10px">Loading 3D terrain…</div>');
+    try {
+      await loadCesium();
+    } catch (_) {
+      if (state.active) message("3D viewer failed to load. Check your connection.");
+      return;
+    }
+    if (!state.active) return;
+    try {
+      initViewer(token, flight);
+    } catch (e) {
+      message("Could not start the 3D viewer.");
+    }
+  }
+
+  function initViewer(token, flight) {
+    Cesium.Ion.defaultAccessToken = token;
+    const viewer = new Cesium.Viewer("cesium-container", {
+      animation: false,
+      timeline: false,
+      baseLayerPicker: false,
+      geocoder: false,
+      homeButton: false,
+      sceneModePicker: false,
+      navigationHelpButton: false,
+      fullscreenButton: false,
+      infoBox: false,
+      selectionIndicator: false,
+      baseLayer: false,
+      terrain: Cesium.Terrain.fromWorldTerrain({
+        requestVertexNormals: true,
+        requestWaterMask: true,
+      }),
+    });
+    state.viewer = viewer;
+
+    // OpenStreetMap imagery (no extra token required).
+    viewer.imageryLayers.addImageryProvider(
+      new Cesium.UrlTemplateImageryProvider({
+        url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+        credit: "© OpenStreetMap contributors",
+        maximumLevel: 19,
+      })
+    );
+
+    const pts = (flight.track || []).filter((p) => p[1] != null && p[2] != null);
+    if (pts.length < 2) {
+      message("This flight has no track to show in 3D.");
+      return;
+    }
+
+    // Flight path polyline at true altitude.
+    const flat = [];
+    pts.forEach((p) => flat.push(p[2], p[1], p[3] != null ? p[3] : 0));
+    const positions = Cesium.Cartesian3.fromDegreesArrayHeights(flat);
+    viewer.entities.add({
+      polyline: {
+        positions,
+        width: 3,
+        clampToGround: false,
+        material: new Cesium.PolylineGlowMaterialProperty({
+          glowPower: 0.2,
+          color: Cesium.Color.fromCssColorString("#c0392b"),
+        }),
+      },
+    });
+
+    const first = pts[0];
+    const last = pts[pts.length - 1];
+    const point = (p, hex) => ({
+      position: Cesium.Cartesian3.fromDegrees(p[2], p[1], p[3] || 0),
+      point: {
+        pixelSize: 12,
+        color: Cesium.Color.fromCssColorString(hex),
+        outlineColor: Cesium.Color.fromCssColorString("#0d0d0d"),
+        outlineWidth: 2,
+      },
+    });
+    viewer.entities.add(point(first, "#22c55e")); // takeoff
+    viewer.entities.add(point(last, "#e63946")); // landing
+
+    // Time-sampled position for replay.
+    const property = new Cesium.SampledPositionProperty();
+    pts.forEach((p) => {
+      property.addSample(
+        Cesium.JulianDate.fromDate(new Date(p[0] * 1000)),
+        Cesium.Cartesian3.fromDegrees(p[2], p[1], p[3] != null ? p[3] : 0)
+      );
+    });
+    property.setInterpolationOptions({
+      interpolationDegree: 1,
+      interpolationAlgorithm: Cesium.LinearApproximation,
+    });
+    state.positionProperty = property;
+
+    const startJd = Cesium.JulianDate.fromDate(new Date(pts[0][0] * 1000));
+    const stopJd = Cesium.JulianDate.fromDate(new Date(pts[pts.length - 1][0] * 1000));
+
+    // Aircraft: an elongated box; VelocityOrientationProperty aligns +X (its
+    // long axis) to the direction of travel, giving correct heading + pitch.
+    state.aircraft = viewer.entities.add({
+      position: property,
+      orientation: new Cesium.VelocityOrientationProperty(property),
+      box: {
+        dimensions: new Cesium.Cartesian3(180, 70, 28),
+        material: Cesium.Color.fromCssColorString("#c0392b"),
+        outline: true,
+        outlineColor: Cesium.Color.WHITE,
+      },
+      show: false,
+    });
+
+    viewer.clock.startTime = startJd.clone();
+    viewer.clock.stopTime = stopJd.clone();
+    viewer.clock.currentTime = startJd.clone();
+    viewer.clock.clockRange = Cesium.ClockRange.CLAMPED;
+    viewer.clock.multiplier = state.speed;
+    viewer.clock.shouldAnimate = false;
+
+    // Fly to the whole route from a 45° side angle.
+    const sphere = Cesium.BoundingSphere.fromPoints(positions);
+    viewer.camera.flyToBoundingSphere(sphere, {
+      duration: 1.4,
+      offset: new Cesium.HeadingPitchRange(
+        Cesium.Math.toRadians(30),
+        Cesium.Math.toRadians(-45),
+        sphere.radius * 2.5
+      ),
+    });
+
+    buildOverlays();
+  }
+
+  function buildOverlays() {
+    const o = $o();
+    o.hidden = false;
+    o.innerHTML = `
+      <div class="cz-controls">
+        <button class="rp-btn" id="cz-play" title="Replay" aria-label="Replay">▶</button>
+        <select class="rp-speed" id="cz-speed" aria-label="Playback speed">
+          <option value="10">10×</option>
+          <option value="50" selected>50×</option>
+          <option value="100">100×</option>
+          <option value="250">250×</option>
+        </select>
+      </div>
+      <button class="cz-cam" id="cz-cam" type="button">Chase</button>
+      <div class="replay-stats cz-stats" id="cz-stats" hidden>
+        <div class="rs-item"><span class="rs-l">ALT</span><span class="rs-v" id="cz-alt">—</span></div>
+        <div class="rs-item"><span class="rs-l">SPD</span><span class="rs-v" id="cz-spd">—</span></div>
+        <div class="rs-item"><span class="rs-l">HDG</span><span class="rs-v" id="cz-hdg">—</span></div>
+        <div class="rs-item"><span class="rs-l">TIME</span><span class="rs-v" id="cz-time">—</span></div>
+      </div>`;
+    document.getElementById("cz-play").onclick = togglePlay;
+    document.getElementById("cz-speed").onchange = (e) => {
+      state.speed = Number(e.target.value) || 50;
+      if (state.viewer) state.viewer.clock.multiplier = state.speed;
+    };
+    document.getElementById("cz-cam").onclick = toggleCamera;
+    state.removeTick = state.viewer.clock.onTick.addEventListener(onTick);
+  }
+
+  function togglePlay() {
+    const v = state.viewer;
+    if (!v) return;
+    const btn = document.getElementById("cz-play");
+    if (v.clock.shouldAnimate) {
+      v.clock.shouldAnimate = false;
+      state.playing = false;
+      btn.textContent = "▶";
+      btn.title = "Resume";
+    } else {
+      if (Cesium.JulianDate.greaterThanOrEquals(v.clock.currentTime, v.clock.stopTime)) {
+        v.clock.currentTime = v.clock.startTime.clone();
+      }
+      state.aircraft.show = true;
+      v.clock.multiplier = state.speed;
+      v.clock.shouldAnimate = true;
+      state.playing = true;
+      btn.textContent = "⏸";
+      btn.title = "Pause";
+      document.getElementById("cz-stats").hidden = false;
+      if (state.chase) v.trackedEntity = state.aircraft;
+    }
+  }
+
+  function toggleCamera() {
+    state.chase = !state.chase;
+    const btn = document.getElementById("cz-cam");
+    if (btn) btn.textContent = state.chase ? "Chase" : "Free";
+    if (state.viewer) {
+      state.viewer.trackedEntity =
+        state.chase && state.playing ? state.aircraft : undefined;
+    }
+  }
+
+  function onTick() {
+    const v = state.viewer;
+    if (!v || !state.positionProperty) return;
+    const t = v.clock.currentTime;
+    const p1 = state.positionProperty.getValue(t);
+    if (!p1) return;
+    const c1 = Cesium.Cartographic.fromCartesian(p1);
+    let spdkt = 0;
+    let hdg = 0;
+    const t2 = Cesium.JulianDate.addSeconds(t, 1, new Cesium.JulianDate());
+    const p2 = state.positionProperty.getValue(t2);
+    if (p2) {
+      const c2 = Cesium.Cartographic.fromCartesian(p2);
+      const lat1 = Cesium.Math.toDegrees(c1.latitude);
+      const lon1 = Cesium.Math.toDegrees(c1.longitude);
+      const lat2 = Cesium.Math.toDegrees(c2.latitude);
+      const lon2 = Cesium.Math.toDegrees(c2.longitude);
+      spdkt = _haversineM(lat1, lon1, lat2, lon2) * MS_TO_KT; // metres per 1 s
+      hdg = _bearing(lat1, lon1, lat2, lon2);
+    }
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    set("cz-alt", `${U.num(Math.round(c1.height * 3.28084))} ft`);
+    set("cz-spd", `${U.num(Math.round(spdkt))} kt`);
+    set("cz-hdg", `${String(Math.round(hdg)).padStart(3, "0")}°`);
+    set("cz-time", Cesium.JulianDate.toIso8601(t, 0).slice(11, 19));
+
+    if (state.playing && Cesium.JulianDate.greaterThanOrEquals(t, v.clock.stopTime)) {
+      state.playing = false;
+      v.clock.shouldAnimate = false;
+      const btn = document.getElementById("cz-play");
+      if (btn) { btn.textContent = "▶"; btn.title = "Replay again"; }
+    }
+  }
+
+  function cleanup() {
+    if (state.removeTick) { try { state.removeTick(); } catch (_) {} state.removeTick = null; }
+    if (state.viewer) { try { state.viewer.destroy(); } catch (_) {} state.viewer = null; }
+    state.active = false;
+    state.playing = false;
+    state.positionProperty = null;
+    state.aircraft = null;
+    const c = $c();
+    if (c) { c.hidden = true; c.classList.remove("fade-in"); }
+    const o = $o();
+    if (o) { o.hidden = true; o.innerHTML = ""; }
+  }
+
+  function exit() {
+    cleanup();
+    const btn = document.getElementById("threed-btn");
+    if (btn) btn.textContent = "🌐 3D";
+    const mapEl = document.getElementById("map");
+    if (mapEl) mapEl.style.display = "";
+    if (mapInstance) {
+      setTimeout(() => { try { mapInstance.invalidateSize(); } catch (_) {} }, 60);
+    }
+  }
+
+  return {
+    enter,
+    exit,
+    cleanup,
+    get active() { return state.active; },
+  };
+})();
 
 /* ============================================================
    MANUAL FLIGHT ENTRY
@@ -1890,6 +2234,25 @@ async function renderSettings() {
           <button class="btn btn-primary btn-sm" id="save-app">Save</button>
         </div>
       </div>
+
+      <div class="card panel">
+        <h3 class="section-title">3D Map</h3>
+        <p class="muted" style="margin-top:0;font-size:13px">
+          Cesium Ion access token for the 3D flight viewer — free account at
+          <a href="https://ion.cesium.com" target="_blank" rel="noopener" style="color:var(--amber)">ion.cesium.com</a>.
+        </p>
+        <label class="field">
+          <span>Cesium Ion Token</span>
+          <input id="s-cesium" placeholder="${
+            settings.cesium_token_set
+              ? "•••• (" + U.esc(settings.cesium_token_masked) + " — saved)"
+              : "Get a free token at ion.cesium.com"
+          }" />
+        </label>
+        <div class="flex flex-end">
+          <button class="btn btn-primary btn-sm" id="save-cesium">Save</button>
+        </div>
+      </div>
     </div>
   `;
 
@@ -1916,6 +2279,20 @@ async function renderSettings() {
       });
       U.toast("Saved", "success");
       loadBranding();
+    } catch (e) {
+      U.toast(e.message, "error");
+    }
+  };
+  document.getElementById("save-cesium").onclick = async () => {
+    const value = document.getElementById("s-cesium").value.trim();
+    if (!value) {
+      U.toast("Enter a Cesium Ion token.", "error");
+      return;
+    }
+    try {
+      await API.updateSettings({ cesium_token: value });
+      U.toast("Cesium token saved", "success");
+      renderSettings();
     } catch (e) {
       U.toast(e.message, "error");
     }

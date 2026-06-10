@@ -697,6 +697,73 @@ input[type="color"] { padding: 4px; height: 42px; cursor: pointer; }
 }
 .leaflet-container { background: var(--map-bg); }
 
+/* ---------- 3D viewer (Cesium) ---------- */
+.cesium-container {
+  height: 56vh;
+  min-height: 420px;
+  width: 100%;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  position: relative;
+  z-index: 1;
+  background: var(--bg-1);
+}
+.cesium-overlays {
+  position: absolute;
+  inset: 0;
+  z-index: 600;
+  pointer-events: none;
+}
+.cesium-overlays > * { pointer-events: auto; }
+.cesium-msg {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+  padding: 24px;
+  color: var(--text);
+  background: var(--bg-1);
+  font-size: 14px;
+}
+.cesium-msg a { color: var(--amber); }
+.cz-controls {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--overlay-bg);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.cz-cam {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 7px 12px;
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--overlay-bg);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.cz-cam:hover { border-color: rgba(var(--accent-rgb), 0.5); }
+.cz-stats { top: auto; bottom: 12px; right: 12px; }
+.fade-in { animation: cz-fade 0.3s ease; }
+@keyframes cz-fade { from { opacity: 0; } to { opacity: 1; } }
+
 /* ---------- Flight replay ---------- */
 .map-wrap { position: relative; }
 

@@ -129,6 +129,10 @@ class SettingsOut(BaseModel):
     opensky_client_id: str = ""
     # Never return the actual secret; only whether one is configured.
     opensky_secret_set: bool = False
+    # Cesium Ion token shown masked on the Settings page (full value is fetched
+    # separately by the 3D viewer via /api/settings/cesium-token).
+    cesium_token_set: bool = False
+    cesium_token_masked: str = ""
 
 
 class SettingsUpdate(BaseModel):
@@ -136,3 +140,8 @@ class SettingsUpdate(BaseModel):
     pilot_name: str | None = None
     opensky_client_id: str | None = None
     opensky_client_secret: str | None = None
+    cesium_token: str | None = None
+
+
+class CesiumToken(BaseModel):
+    token: str = ""

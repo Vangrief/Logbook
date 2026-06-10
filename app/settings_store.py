@@ -10,6 +10,7 @@ DEFAULTS = {
     "pilot_name": "",
     "opensky_client_id": "",
     "opensky_client_secret": "",
+    "cesium_token": "",
 }
 
 
