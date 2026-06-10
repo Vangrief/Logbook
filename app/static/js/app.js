@@ -1246,14 +1246,28 @@ const cesium3d = (() => {
 
     const lon = (p) => p[2];
     const lat = (p) => p[1];
-    // OpenSky altitude is metres above MSL. WGS84 geoid undulation (~45 m in
-    // Switzerland) is visually negligible, so we use it directly as the
-    // ellipsoid height — no terrain sampling, no double-counting.
-    const alt = (p) => (p[3] != null ? p[3] : 0);
+    // OpenSky altitude is metres above MSL. A +200 m offset lifts the line
+    // clear of terrain (baro altitude near the ground is unreliable, and MSL
+    // can sit below the terrain surface, e.g. 304 m MSL over ~400 m terrain).
+    const ALT_OFFSET = 200;
+    const elev = (p) => (p[3] != null ? p[3] : 0) + ALT_OFFSET;
 
-    // Flight path drawn directly at its real altitude.
+    // Dual-line (à la ForeFlight/SkyVector):
+    // 1) a thin white "shadow" clamped to the ground to show the map path,
+    const groundFlat = [];
+    pts.forEach((p) => groundFlat.push(lon(p), lat(p)));
+    viewer.entities.add({
+      polyline: {
+        positions: Cesium.Cartesian3.fromDegreesArray(groundFlat),
+        width: 1,
+        clampToGround: true,
+        material: Cesium.Color.WHITE.withAlpha(0.6),
+      },
+    });
+
+    // 2) the actual flight path elevated at altitude (+offset).
     const flat = [];
-    pts.forEach((p) => flat.push(lon(p), lat(p), alt(p)));
+    pts.forEach((p) => flat.push(lon(p), lat(p), elev(p)));
     const positions = Cesium.Cartesian3.fromDegreesArrayHeights(flat);
     viewer.entities.add({
       polyline: {
@@ -1282,12 +1296,12 @@ const cesium3d = (() => {
     viewer.entities.add(marker(pts[0], "#22c55e")); // takeoff
     viewer.entities.add(marker(pts[pts.length - 1], "#e63946")); // landing
 
-    // Time-sampled position for replay, at real altitude.
+    // Time-sampled position for replay — same elevated altitude as the line.
     const property = new Cesium.SampledPositionProperty();
     pts.forEach((p) =>
       property.addSample(
         Cesium.JulianDate.fromDate(new Date(p[0] * 1000)),
-        Cesium.Cartesian3.fromDegrees(lon(p), lat(p), alt(p))
+        Cesium.Cartesian3.fromDegrees(lon(p), lat(p), elev(p))
       )
     );
     property.setInterpolationOptions({
@@ -1322,7 +1336,7 @@ const cesium3d = (() => {
 
     // Camera: above the track centre at ~45° looking down, high enough to see
     // the whole route (and at least ~3× the max flight altitude up).
-    const maxAlt = Math.max(1000, ...pts.map(alt));
+    const maxAlt = Math.max(1000, ...pts.map(elev));
     const sphere = Cesium.BoundingSphere.fromPoints(positions);
     const range = Math.max(sphere.radius * 2.2, maxAlt * 3);
     viewer.camera.flyToBoundingSphere(sphere, {
