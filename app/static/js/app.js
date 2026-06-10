@@ -329,6 +329,12 @@ async function renderDetail(id) {
         <canvas id="alt-chart"></canvas>
       </div>
 
+      <div class="card panel weather-panel" id="weather-panel">
+        <h3>Weather</h3>
+        <div class="weather-grid" id="weather-tiles">${weatherSkeleton()}</div>
+        <div class="weather-note muted">Weather at departure point · Open-Meteo historical data</div>
+      </div>
+
       <div class="card panel">
         <div class="notes-row">
           <h3 style="margin:0">Pilot Notes</h3>
@@ -372,8 +378,95 @@ async function renderDetail(id) {
 
   drawMap(f, { showLanding: !live });
   drawAltChart(f);
+  loadWeather(id);
 
   if (live) startLive(f);
+}
+
+/* ---- Historical weather panel (lazy, cached server-side) ---- */
+function weatherSkeleton() {
+  return Array.from({ length: 6 })
+    .map(
+      () =>
+        `<div class="stat-tile weather-tile skeleton">
+          <div class="sk-line sk-label"></div><div class="sk-line sk-value"></div>
+        </div>`
+    )
+    .join("");
+}
+
+function weatherEmoji(c) {
+  if (c === 0) return "☀️";
+  if (c === 1 || c === 2) return "🌤";
+  if (c === 3) return "☁️";
+  if (c === 45 || c === 48) return "🌫";
+  if (c >= 51 && c <= 67) return "🌧";
+  if (c >= 71 && c <= 77) return "🌨";
+  if (c >= 80 && c <= 82) return "🌧";
+  if (c >= 85 && c <= 86) return "🌨";
+  if (c >= 95) return "⛈";
+  return "🌡";
+}
+
+function weatherTiles(w) {
+  const tile = (label, value, extra = "") =>
+    `<div class="stat-tile weather-tile">
+      <div class="label">${label}</div>
+      <div class="value">${value}</div>
+      ${extra}
+    </div>`;
+
+  const temp =
+    w.temperature_c != null ? `${U.num(w.temperature_c, 1)}<span class="unit">°C</span>` : "—";
+
+  const windVal =
+    w.windspeed_kt != null
+      ? `${U.num(Math.round(w.windspeed_kt))}<span class="unit">kt</span>`
+      : "—";
+  const windExtra =
+    w.wind_direction_deg != null
+      ? `<div class="wx-sub"><span class="wx-arrow" style="transform:rotate(${w.wind_direction_deg}deg)">↑</span> ${w.wind_direction_deg}°</div>`
+      : "";
+
+  const wxExtra = `<div class="wx-sub wx-desc">${U.esc(w.weather_description || "")}</div>`;
+
+  let visVal = "—";
+  if (w.visibility_m != null) {
+    const km = w.visibility_m / 1000;
+    visVal = (km > 45 ? "&gt;45" : U.num(km, km < 10 ? 1 : 0)) + `<span class="unit">km</span>`;
+  }
+
+  const cloudVal =
+    w.cloudcover_pct != null ? `${U.num(w.cloudcover_pct)}<span class="unit">%</span>` : "—";
+  const cloudExtra =
+    w.cloudcover_pct != null
+      ? `<div class="wx-bar"><span style="width:${Math.max(0, Math.min(100, w.cloudcover_pct))}%"></span></div>`
+      : "";
+
+  const precipVal =
+    w.precipitation_mm != null ? `${U.num(w.precipitation_mm, 1)}<span class="unit">mm</span>` : "—";
+
+  return [
+    tile("Temperature", temp),
+    tile("Wind", windVal, windExtra),
+    tile("Weather", `<span class="wx-icon">${weatherEmoji(w.weathercode)}</span>`, wxExtra),
+    tile("Visibility", visVal),
+    tile("Cloud Cover", cloudVal, cloudExtra),
+    tile("Precipitation", precipVal),
+  ].join("");
+}
+
+async function loadWeather(id) {
+  try {
+    const w = await API.getWeather(id);
+    const el = document.getElementById("weather-tiles");
+    if (el) el.innerHTML = weatherTiles(w);
+  } catch (_) {
+    const el = document.getElementById("weather-tiles");
+    if (el) {
+      el.innerHTML = `<div class="weather-unavailable muted">Weather data unavailable</div>`;
+    }
+  }
 }
 
 // A flight is live if the backend flagged it, or its arrival is in the future.

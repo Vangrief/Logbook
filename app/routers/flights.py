@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import opensky, stats
+from .. import opensky, stats, weather
 from ..database import get_db
 from ..models import Aircraft, Flight
 from ..schemas import (
@@ -19,6 +19,7 @@ from ..schemas import (
     FlightNotesUpdate,
     FlightPatch,
     FlightSummary,
+    WeatherData,
 )
 from ..settings_store import get_credentials
 
@@ -395,6 +396,36 @@ def get_flight(flight_id: int, db: Session = Depends(get_db)):
         query_time=flight.query_time,
         track=raw.get("path", []),
     )
+
+
+@router.get("/{flight_id}/weather", response_model=WeatherData)
+async def get_flight_weather(flight_id: int, db: Session = Depends(get_db)):
+    """Historical weather at the takeoff point, fetched lazily and cached."""
+    flight = db.get(Flight, flight_id)
+    if flight is None:
+        raise HTTPException(status_code=404, detail="Flight not found")
+
+    if flight.weather_cache:
+        return WeatherData(**json.loads(flight.weather_cache))
+
+    raw = json.loads(flight.raw_track)
+    first = next(
+        (p for p in (raw.get("path") or []) if p[1] is not None and p[2] is not None),
+        None,
+    )
+    if first is None:
+        raise HTTPException(status_code=404, detail="Flight has no track data")
+
+    lat, lon = first[1], first[2]
+    departure_ts = int(first[0] or flight.start_time)
+
+    data = await weather.fetch_weather(lat, lon, departure_ts)
+    if data is None:
+        raise HTTPException(status_code=502, detail="Weather data unavailable")
+
+    flight.weather_cache = json.dumps(data)
+    db.commit()
+    return WeatherData(**data)
 
 
 @router.put("/{flight_id}/notes", response_model=FlightSummary)

@@ -56,6 +56,7 @@ const API = (() => {
     },
     createFlight: (f) => request("POST", "/api/flights", f),
     getFlight: (id) => request("GET", `/api/flights/${id}`),
+    getWeather: (id) => request("GET", `/api/flights/${id}/weather`),
     patchFlight: (id, body) => request("PATCH", `/api/flights/${id}`, body),
     updateNotes: (id, notes) => request("PUT", `/api/flights/${id}/notes`, { notes }),
     deleteFlight: (id) => request("DELETE", `/api/flights/${id}`),

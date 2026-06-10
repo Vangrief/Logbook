@@ -46,6 +46,20 @@ class FlightNotesUpdate(BaseModel):
     notes: str
 
 
+class WeatherData(BaseModel):
+    """Historical weather at the flight's departure point (Open-Meteo)."""
+
+    temperature_c: float | None = None
+    windspeed_kt: float | None = None
+    wind_direction_deg: int | None = None
+    weathercode: int = -1
+    weather_description: str = "Unknown"
+    visibility_m: float | None = None
+    precipitation_mm: float | None = None
+    cloudcover_pct: int | None = None
+    data_time_utc: str | None = None
+
+
 class FlightPatch(BaseModel):
     """Incremental update used by live tracking."""
 

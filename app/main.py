@@ -59,6 +59,8 @@ def _migrate(conn) -> None:
         conn.exec_driver_sql(
             "ALTER TABLE flights ADD COLUMN is_live BOOLEAN NOT NULL DEFAULT 0"
         )
+    if "weather_cache" not in cols:
+        conn.exec_driver_sql("ALTER TABLE flights ADD COLUMN weather_cache TEXT")
 
 
 @app.on_event("startup")

@@ -64,6 +64,9 @@ class Flight(Base):
         Boolean, nullable=False, default=False, server_default="0"
     )
 
+    # Cached Open-Meteo weather lookup (JSON text), fetched lazily on first view.
+    weather_cache: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     aircraft: Mapped["Aircraft"] = relationship(back_populates="flights")
 
 
