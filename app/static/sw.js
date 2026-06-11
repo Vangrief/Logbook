@@ -2,7 +2,7 @@
    Cache-first for static assets, network-first for API calls.
    The placeholder in CACHE_VERSION below is replaced with the git commit hash
    at build time (see Dockerfile) so every build invalidates the old cache. */
-const CACHE_VERSION = 'logbook-CACHE_VERSION_PLACEHOLDER';
+const CACHE_VERSION = 'logbook-v2-CACHE_VERSION_PLACEHOLDER';
 
 const SHELL = [
   "/",
