@@ -8,6 +8,7 @@ let aircraftCache = [];
 
 /* ---------------- Routing ---------------- */
 const routes = [
+  { re: /^#\/compare\/(\d+)\/(\d+)$/, handler: (m) => renderCompare(Number(m[1]), Number(m[2])) },
   { re: /^#\/flights\/(\d+)$/, handler: (m) => renderDetail(Number(m[1])) },
   { re: /^#\/flights$/, handler: renderFlights },
   { re: /^#\/new$/, handler: renderNew },
@@ -142,6 +143,10 @@ function drawFlights(flights) {
       </div>
     </div>
 
+    <div class="compare-bar" id="compare-bar" hidden>
+      <button class="btn btn-primary" id="compare-btn">⚖ Compare selected flights</button>
+    </div>
+
     <div class="flight-list" id="flight-list"></div>
   `;
 
@@ -155,6 +160,13 @@ function drawFlights(flights) {
   } else {
     drawFlightGroups(listEl, flights);
   }
+
+  document.getElementById("compare-btn").onclick = () => {
+    if (compareSel.length === 2) {
+      window.location.hash = `#/compare/${compareSel[0]}/${compareSel[1]}`;
+    }
+  };
+  syncCompareUI();
 
   const reload = () => {
     listState.aircraft_id = document.getElementById("f-aircraft").value;
@@ -225,6 +237,9 @@ function flightRow(f) {
   const row = U.html(`
     <div class="card flight-row">
       <div class="tail">
+        <input type="checkbox" class="cmp-check" data-id="${f.id}"
+          ${compareSel.includes(f.id) ? "checked" : ""}
+          aria-label="Select flight for comparison" />
         <span class="dot" style="color:${U.esc(color)};background:${U.esc(color)}"></span>
         <span>${U.esc(f.registration || "—")}</span>
       </div>
@@ -242,7 +257,33 @@ function flightRow(f) {
     </div>
   `);
   row.onclick = () => { window.location.hash = `#/flights/${f.id}`; };
+  const cb = row.querySelector(".cmp-check");
+  cb.onclick = (e) => {
+    e.stopPropagation(); // don't navigate to the detail page
+    toggleCompare(f.id);
+  };
   return row;
+}
+
+/* ---- Flight comparison selection (max 2, oldest dropped first) ---- */
+let compareSel = [];
+
+function toggleCompare(id) {
+  const i = compareSel.indexOf(id);
+  if (i >= 0) compareSel.splice(i, 1);
+  else {
+    compareSel.push(id);
+    if (compareSel.length > 2) compareSel.shift(); // 3rd pick replaces oldest
+  }
+  syncCompareUI();
+}
+
+function syncCompareUI() {
+  document.querySelectorAll(".cmp-check").forEach((cb) => {
+    cb.checked = compareSel.includes(Number(cb.dataset.id));
+  });
+  const bar = document.getElementById("compare-bar");
+  if (bar) bar.hidden = compareSel.length !== 2;
 }
 
 /* ============================================================
@@ -1508,6 +1549,287 @@ async function addDiscoveredFlight(btn, aircraftId, firstSeen) {
 }
 
 /* ============================================================
+   FLIGHT COMPARISON
+   ============================================================ */
+let compareMap = null;
+let compareChart = null;
+
+// Mix two hex colors; t=0 → c1, t=1 → c2. Returns rgb() string.
+function _mixHex(c1, c2, t) {
+  const rgb = (h) => [
+    parseInt(h.slice(1, 3), 16),
+    parseInt(h.slice(3, 5), 16),
+    parseInt(h.slice(5, 7), 16),
+  ];
+  const a = rgb(c1);
+  const b = rgb(c2);
+  const m = a.map((v, i) => Math.round(v + (b[i] - v) * t));
+  return `rgb(${m[0]}, ${m[1]}, ${m[2]})`;
+}
+
+// Short Zurich date for legends/cards, e.g. "04.06".
+function _shortDate(ts) {
+  const [, mm, dd] = U.zurichDateKey(ts).split("-");
+  return `${dd}.${mm}`;
+}
+
+async function renderCompare(idA, idB) {
+  if (compareMap) { try { compareMap.remove(); } catch (_) {} compareMap = null; }
+  if (compareChart) { compareChart.destroy(); compareChart = null; }
+  loading("Loading comparison");
+
+  let data;
+  try {
+    data = await API.compareFlights(idA, idB);
+  } catch (e) {
+    view.innerHTML = errorBox(e.message);
+    return;
+  }
+  const A = data.flight_a;
+  const B = data.flight_b;
+  const colA = cssVar("--amber");
+  const colB = cssVar("--sakura");
+
+  const card = (f, cls, label) => `
+    <div class="cmp-card ${cls}">
+      <div class="cmp-tag">${label}</div>
+      <div class="cmp-reg">${U.esc(f.registration || "—")}</div>
+      <div class="cmp-sub">${U.fmtDate(f.start_time)} · ${U.fmtDuration(f.duration_s)}</div>
+    </div>`;
+
+  // ---- Stats table ----
+  const metrics = [
+    { label: "Duration", a: A.duration_s, b: B.duration_s,
+      fmt: (v) => U.fmtDuration(v), dfmt: (d) => U.fmtDuration(Math.abs(d)) },
+    { label: "Distance", a: A.distance_km, b: B.distance_km,
+      fmt: (v) => `${U.num(v, 1)} km`, dfmt: (d) => `${U.num(Math.abs(d), 1)} km` },
+    { label: "Max Alt", a: A.max_altitude_ft, b: B.max_altitude_ft,
+      fmt: (v) => `${U.num(v)} ft`, dfmt: (d) => `${U.num(Math.abs(d))} ft` },
+    { label: "Avg Alt", a: A.avg_altitude_ft, b: B.avg_altitude_ft,
+      fmt: (v) => `${U.num(v)} ft`, dfmt: (d) => `${U.num(Math.abs(d))} ft` },
+    { label: "Max Speed", a: A.max_speed_kt, b: B.max_speed_kt,
+      fmt: (v) => `${U.num(v)} kt`, dfmt: (d) => `${U.num(Math.abs(d))} kt` },
+    { label: "Avg Speed", a: A.avg_speed_kt, b: B.avg_speed_kt,
+      fmt: (v) => `${U.num(v)} kt`, dfmt: (d) => `${U.num(Math.abs(d))} kt` },
+  ];
+
+  const statRows =
+    `<tr>
+      <td>Date</td>
+      <td>${U.fmtDate(A.start_time)}</td>
+      <td>${U.fmtDate(B.start_time)}</td>
+      <td class="cmp-diff zero">–</td>
+    </tr>` +
+    metrics
+      .map((m) => {
+        const d = (m.a || 0) - (m.b || 0);
+        const winA = d > 0;
+        const winB = d < 0;
+        const diffCls = d > 0 ? "pos" : d === 0 ? "zero" : "";
+        const diffTxt = d === 0 ? "±0" : `${d > 0 ? "+" : "−"}${m.dfmt(d)}`;
+        return `<tr>
+          <td>${m.label}</td>
+          <td class="${winA ? "cmp-win" : ""}">${m.fmt(m.a)}</td>
+          <td class="${winB ? "cmp-win" : ""}">${m.fmt(m.b)}</td>
+          <td class="cmp-diff ${diffCls}">${diffTxt}</td>
+        </tr>`;
+      })
+      .join("");
+
+  view.innerHTML = `
+    <div class="page-head">
+      <div>
+        <h1>Flight Comparison</h1>
+        <div class="sub">${U.esc(A.registration || "?")} vs ${U.esc(B.registration || "?")}</div>
+      </div>
+      <a class="btn btn-ghost" href="#/flights">‹ Back</a>
+    </div>
+
+    <div class="cmp-cards">
+      ${card(A, "cmp-a", "Flight A")}
+      ${card(B, "cmp-b", "Flight B")}
+    </div>
+
+    <div class="detail-grid">
+      <div class="map-wrap">
+        <div id="cmp-map"></div>
+        <div class="airports-info cmp-legend">
+          <div class="cl-row"><span class="cl-line" style="background:${colA}"></span>
+            A · ${U.esc(A.registration || "?")} ${_shortDate(A.start_time)}</div>
+          <div class="cl-row"><span class="cl-line" style="background:${colB}"></span>
+            B · ${U.esc(B.registration || "?")} ${_shortDate(B.start_time)}</div>
+        </div>
+      </div>
+
+      <div class="card panel">
+        <h3>Statistics</h3>
+        <div style="overflow-x:auto">
+          <table class="cmp-table">
+            <thead><tr>
+              <th>Metric</th><th class="cmp-a-h">Flight A</th>
+              <th class="cmp-b-h">Flight B</th><th>Difference</th>
+            </tr></thead>
+            <tbody>${statRows}</tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card chart-wrap" id="cmp-chart-card">
+        <h3>Altitude Profile · % of flight</h3>
+        <canvas id="cmp-chart"></canvas>
+      </div>
+
+      <div id="cmp-weather"></div>
+    </div>
+  `;
+
+  drawCompareMap(A, B, colA, colB);
+  drawCompareChart(A, B, colA, colB);
+  loadCompareWeather(A, B);
+}
+
+function drawCompareMap(A, B, colA, colB) {
+  const tileStyle = document.body.classList.contains("light-mode")
+    ? "light_all"
+    : "dark_all";
+  const map = L.map("cmp-map", { zoomControl: true, attributionControl: true });
+  compareMap = map;
+  L.tileLayer(
+    `https://{s}.basemaps.cartocdn.com/${tileStyle}/{z}/{x}/{y}{r}.png`,
+    {
+      attribution: "&copy; OpenStreetMap &copy; CARTO · tracks via OpenSky Network",
+      subdomains: "abcd",
+      maxZoom: 19,
+    }
+  ).addTo(map);
+
+  // Each flight gets a light→full tint gradient of its own color so the
+  // direction of flight stays readable.
+  const drawTrack = (f, base) => {
+    const pts = (f.track || [])
+      .filter((p) => p[1] !== null && p[2] !== null)
+      .map((p) => [p[1], p[2]]);
+    if (pts.length < 2) return [];
+    const start = _mixHex(base, "#ffffff", 0.55);
+    const end = _mixHex(base, "#000000", 0.25);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const t = i / (pts.length - 1);
+      L.polyline([pts[i], pts[i + 1]], {
+        color: t < 0.5 ? _mixHex(start, base, t * 2) : _mixHex(base, end, (t - 0.5) * 2),
+        weight: 4,
+        opacity: 0.9,
+        lineCap: "round",
+      }).addTo(map);
+    }
+    L.circleMarker(pts[0], {
+      radius: 7, color: "#ffffff", weight: 2, fillColor: base, fillOpacity: 1,
+    }).addTo(map).bindTooltip(`${f.registration || ""} takeoff`, { direction: "top" });
+    return pts;
+  };
+
+  const all = [...drawTrack(A, colA), ...drawTrack(B, colB)];
+  if (all.length) map.fitBounds(L.latLngBounds(all), { padding: [40, 40] });
+  else map.setView([47.0, 8.0], 7);
+}
+
+function drawCompareChart(A, B, colA, colB) {
+  const dataset = (f, color, label) => {
+    const path = (f.track || []).filter((p) => p[0] != null && p[3] != null);
+    if (path.length < 2) return null;
+    const t0 = path[0][0];
+    const span = path[path.length - 1][0] - t0 || 1;
+    return {
+      label,
+      data: path.map((p) => ({ x: ((p[0] - t0) / span) * 100, y: p[3] * 3.28084 })),
+      borderColor: color,
+      backgroundColor: "transparent",
+      borderWidth: 2,
+      pointRadius: 0,
+      tension: 0.25,
+    };
+  };
+  const dsA = dataset(A, colA, `A · ${A.registration || "?"}`);
+  const dsB = dataset(B, colB, `B · ${B.registration || "?"}`);
+  if (!dsA && !dsB) {
+    const cardEl = document.getElementById("cmp-chart-card");
+    if (cardEl) cardEl.remove();
+    return;
+  }
+
+  const cText = cssVar("--text");
+  const cDim = cssVar("--text-dim");
+  const cFaint = cssVar("--text-faint");
+  const ctx = document.getElementById("cmp-chart").getContext("2d");
+  compareChart = new Chart(ctx, {
+    type: "line",
+    data: { datasets: [dsA, dsB].filter(Boolean) },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      parsing: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: {
+          display: true,
+          labels: { color: cDim, font: { family: "JetBrains Mono", size: 11 }, boxWidth: 18 },
+        },
+        tooltip: {
+          backgroundColor: cssVar("--bg-2"),
+          borderColor: cssVar("--border"),
+          borderWidth: 1,
+          titleColor: cDim,
+          bodyColor: cText,
+          bodyFont: { family: "JetBrains Mono" },
+          callbacks: {
+            title: (items) => `${items[0].parsed.x.toFixed(0)} % of flight`,
+            label: (item) =>
+              `${item.dataset.label}: ${Math.round(item.parsed.y).toLocaleString()} ft`,
+          },
+        },
+      },
+      scales: {
+        x: {
+          type: "linear", min: 0, max: 100,
+          title: { display: true, text: "% of flight", color: cFaint },
+          ticks: { color: cFaint, font: { family: "JetBrains Mono", size: 10 } },
+          grid: { color: cssVar("--chart-grid") },
+        },
+        y: {
+          title: { display: true, text: "feet", color: cFaint },
+          ticks: { color: cFaint, font: { family: "JetBrains Mono", size: 10 } },
+          grid: { color: cssVar("--chart-grid") },
+        },
+      },
+    },
+  });
+}
+
+async function loadCompareWeather(A, B) {
+  const box = document.getElementById("cmp-weather");
+  if (!box) return;
+  const [wA, wB] = await Promise.all([
+    API.getWeather(A.id).catch(() => null),
+    API.getWeather(B.id).catch(() => null),
+  ]);
+  const target = document.getElementById("cmp-weather");
+  if (!target) return; // navigated away meanwhile
+  // Only shown when weather exists for BOTH flights.
+  if (!wA || !wB) { target.remove(); return; }
+  target.innerHTML = `
+    <div class="cmp-weather-grid">
+      <div class="card panel">
+        <h3 class="cmp-a-h">Weather · Flight A</h3>
+        <div class="weather-grid">${weatherTiles(wA)}</div>
+      </div>
+      <div class="card panel">
+        <h3 class="cmp-b-h">Weather · Flight B</h3>
+        <div class="weather-grid">${weatherTiles(wB)}</div>
+      </div>
+    </div>`;
+}
+
+/* ============================================================
    STATISTICS
    ============================================================ */
 let statsCharts = [];
@@ -2343,6 +2665,7 @@ function toggleTheme() {
   const hash = window.location.hash;
   if (
     /^#\/flights\/\d+$/.test(hash) ||
+    hash.startsWith("#/compare/") ||
     hash === "#/stats" ||
     hash === "#/airports" ||
     hash === "#/heatmap"

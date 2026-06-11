@@ -12,6 +12,7 @@ from ..database import get_db
 from ..models import Aircraft, Flight
 from ..schemas import (
     DiscoveredFlight,
+    FlightComparison,
     FlightCreate,
     FlightDetail,
     FlightNotesUpdate,
@@ -166,6 +167,28 @@ async def discover_flights(
         )
 
     return results
+
+
+def _detail(flight: Flight) -> FlightDetail:
+    raw = json.loads(flight.raw_track)
+    return FlightDetail(
+        **_to_summary(flight).model_dump(),
+        query_time=flight.query_time,
+        track=raw.get("path", []),
+    )
+
+
+# Declared before /{flight_id} so "compare" isn't parsed as a flight id.
+@router.get("/compare", response_model=FlightComparison)
+def compare_flights(
+    a: int = Query(...), b: int = Query(...), db: Session = Depends(get_db)
+):
+    """Full detail for two flights in one response (comparison page)."""
+    fa = db.get(Flight, a)
+    fb = db.get(Flight, b)
+    if fa is None or fb is None:
+        raise HTTPException(status_code=404, detail="Flight not found")
+    return FlightComparison(flight_a=_detail(fa), flight_b=_detail(fb))
 
 
 @router.post("", response_model=FlightDetail, status_code=201)

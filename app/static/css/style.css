@@ -603,6 +603,125 @@ input[type="color"] { padding: 4px; height: 42px; cursor: pointer; }
 }
 .chev { color: var(--text-faint); text-align: right; }
 
+/* ---------- Flight comparison ---------- */
+/* Row checkbox: revealed on hover (always visible on touch widths/checked). */
+.cmp-check {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--amber);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.flight-row:hover .cmp-check,
+.cmp-check:checked { opacity: 1; }
+@media (max-width: 860px) {
+  .cmp-check { opacity: 1; }
+}
+
+.compare-bar { margin-bottom: 14px; }
+
+.cmp-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.cmp-card {
+  background: var(--tile-bg);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+.cmp-card.cmp-a { border-left: 3px solid var(--amber); }
+.cmp-card.cmp-b { border-left: 3px solid var(--sakura); }
+.cmp-card .cmp-tag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+}
+.cmp-card.cmp-a .cmp-tag { color: var(--amber); }
+.cmp-card.cmp-b .cmp-tag { color: var(--sakura); }
+.cmp-card .cmp-reg {
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+.cmp-card .cmp-sub {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-soft);
+  margin-top: 2px;
+}
+
+.cmp-legend { position: absolute; top: 12px; left: 56px; z-index: 500; }
+.cmp-legend .cl-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.cmp-legend .cl-line {
+  display: inline-block;
+  width: 22px;
+  height: 3px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.cmp-table { width: 100%; border-collapse: collapse; }
+.cmp-table th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-strong);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.cmp-table th.cmp-a-h { color: var(--amber); }
+.cmp-table th.cmp-b-h { color: var(--sakura); }
+.cmp-table td {
+  padding: 10px;
+  border-bottom: 1px solid var(--border-soft);
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+}
+.cmp-table tbody tr:nth-child(even) td { background: rgba(var(--accent-rgb), 0.04); }
+.cmp-table tr:last-child td { border-bottom: none; }
+.cmp-table td:first-child {
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.cmp-table .cmp-win { color: var(--amber); font-weight: 600; }
+.cmp-table .cmp-diff.pos { color: var(--green); }
+.cmp-table .cmp-diff.zero { color: var(--text-faint); }
+
+.cmp-weather-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+h3.cmp-a-h { color: var(--amber) !important; }
+h3.cmp-b-h { color: var(--sakura) !important; }
+
+@media (max-width: 860px) {
+  .cmp-cards { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .cmp-weather-grid { grid-template-columns: 1fr; }
+}
+
 /* ---------- Stat tiles ---------- */
 .stat-grid {
   display: grid;
@@ -700,7 +819,8 @@ input[type="color"] { padding: 4px; height: 42px; cursor: pointer; }
   grid-template-columns: 1fr;
   gap: 16px;
 }
-#map {
+#map,
+#cmp-map {
   height: 56vh;
   min-height: 420px;
   width: 100%;

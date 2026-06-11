@@ -114,6 +114,13 @@ class FlightDetail(FlightSummary):
     track: list = []
 
 
+class FlightComparison(BaseModel):
+    """Two full flight details for the side-by-side comparison page."""
+
+    flight_a: FlightDetail
+    flight_b: FlightDetail
+
+
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
