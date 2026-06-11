@@ -61,9 +61,6 @@ const API = (() => {
     updateNotes: (id, notes) => request("PUT", `/api/flights/${id}/notes`, { notes }),
     deleteFlight: (id) => request("DELETE", `/api/flights/${id}`),
 
-    // Live tracking — returns null (204) when no fresh state is available.
-    getLive: (icao24) => request("GET", `/api/live/${icao24}`),
-
     // Settings
     getSettings: () => request("GET", "/api/settings"),
     updateSettings: (s) => request("PUT", "/api/settings", s),

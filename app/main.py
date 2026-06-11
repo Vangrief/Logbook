@@ -22,7 +22,6 @@ from .routers import (
     auth as auth_router,
     flights,
     heatmap,
-    live,
     settings,
     stats,
 )
@@ -104,7 +103,6 @@ app.include_router(settings.router)
 app.include_router(stats.router)
 app.include_router(airports.router)
 app.include_router(heatmap.router)
-app.include_router(live.router)
 
 
 @app.get("/api/health")

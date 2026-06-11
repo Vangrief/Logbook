@@ -38,8 +38,6 @@ class FlightCreate(BaseModel):
     # Unix timestamp (seconds, UTC) sometime DURING the flight.
     time: int
     notes: str = ""
-    # Mark the flight as ongoing so the detail page enters live mode.
-    live: bool = False
 
 
 class FlightNotesUpdate(BaseModel):
@@ -83,10 +81,6 @@ class DiscoveredFlight(BaseModel):
     # Whether this flight is already stored locally, and its id if so.
     already_logged: bool = False
     logged_flight_id: int | None = None
-    # Ongoing flight (no arrival time yet) — offer "Track Live".
-    live: bool = False
-    # Where this candidate came from: historical / live / tracks.
-    source: str = "historical"
 
 
 class FlightSummary(BaseModel):
