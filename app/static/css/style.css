@@ -462,6 +462,19 @@ input[type="color"] { padding: 4px; height: 42px; cursor: pointer; }
   gap: 0 16px;
 }
 
+/* Subtle informational note inside a form/panel. */
+.form-note {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--amber);
+  border-radius: 8px;
+}
+
 /* ---------- Toolbar (filters/sort) ---------- */
 .toolbar {
   display: flex;

@@ -1343,6 +1343,11 @@ async function renderNew() {
         automatically — no need for precise start/end times.
       </p>
 
+      <div class="form-note">
+        ℹ️ Flights typically appear in OpenSky's historical database 1–2 days
+        after they occur. If a recent flight isn't showing up, check back tomorrow.
+      </div>
+
       <label class="field">
         <span>Aircraft</span>
         <select id="n-aircraft">${acOptions}</select>
