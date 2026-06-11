@@ -1554,17 +1554,21 @@ async function addDiscoveredFlight(btn, aircraftId, firstSeen) {
 let compareMap = null;
 let compareChart = null;
 
-// Mix two hex colors; t=0 → c1, t=1 → c2. Returns rgb() string.
-function _mixHex(c1, c2, t) {
-  const rgb = (h) => [
+// Color helpers for the comparison track gradients. Mixing happens on RGB
+// triples; only the final value is turned into a CSS string. (Mixing CSS
+// strings directly produced rgb(NaN…) and made the polylines invisible.)
+function _hexToRgb(h) {
+  return [
     parseInt(h.slice(1, 3), 16),
     parseInt(h.slice(3, 5), 16),
     parseInt(h.slice(5, 7), 16),
   ];
-  const a = rgb(c1);
-  const b = rgb(c2);
-  const m = a.map((v, i) => Math.round(v + (b[i] - v) * t));
-  return `rgb(${m[0]}, ${m[1]}, ${m[2]})`;
+}
+function _mixRgb(a, b, t) {
+  return a.map((v, i) => Math.round(v + (b[i] - v) * t));
+}
+function _rgbCss(c) {
+  return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
 }
 
 // Short Zurich date for legends/cards, e.g. "04.06".
@@ -1587,6 +1591,10 @@ async function renderCompare(idA, idB) {
   }
   const A = data.flight_a;
   const B = data.flight_b;
+  console.log(
+    `[compare] API response: flight_a.track=${(A.track || []).length} points, ` +
+    `flight_b.track=${(B.track || []).length} points`
+  );
   const colA = cssVar("--amber");
   const colB = cssVar("--sakura");
 
@@ -1704,32 +1712,64 @@ function drawCompareMap(A, B, colA, colB) {
   ).addTo(map);
 
   // Each flight gets a light→full tint gradient of its own color so the
-  // direction of flight stays readable.
-  const drawTrack = (f, base) => {
+  // direction of flight stays readable. All mixing is done on RGB triples —
+  // never on CSS strings (the previous string-mixing yielded rgb(NaN…) and
+  // silently invisible polylines).
+  const drawTrack = (f, base, label) => {
     const pts = (f.track || [])
-      .filter((p) => p[1] !== null && p[2] !== null)
-      .map((p) => [p[1], p[2]]);
+      .filter((p) => p[1] != null && p[2] != null)
+      .map((p) => [p[1], p[2]]); // [lat, lon] = [point[1], point[2]]
+
+    console.log(
+      `[compare] ${label} (${f.registration || "?"}): ${pts.length} track point(s)`,
+      pts.length
+        ? `first=[${pts[0]}] last=[${pts[pts.length - 1]}]`
+        : "(no usable coordinates)"
+    );
     if (pts.length < 2) return [];
-    const start = _mixHex(base, "#ffffff", 0.55);
-    const end = _mixHex(base, "#000000", 0.25);
-    for (let i = 0; i < pts.length - 1; i++) {
-      const t = i / (pts.length - 1);
-      L.polyline([pts[i], pts[i + 1]], {
-        color: t < 0.5 ? _mixHex(start, base, t * 2) : _mixHex(base, end, (t - 0.5) * 2),
-        weight: 4,
-        opacity: 0.9,
-        lineCap: "round",
-      }).addTo(map);
+
+    const baseRgb = _hexToRgb(base);
+    const startRgb = _mixRgb(baseRgb, [255, 255, 255], 0.55);
+    const endRgb = _mixRgb(baseRgb, [0, 0, 0], 0.25);
+
+    let added = 0;
+    try {
+      for (let i = 0; i < pts.length - 1; i++) {
+        const t = i / (pts.length - 1);
+        const c =
+          t < 0.5
+            ? _mixRgb(startRgb, baseRgb, t * 2)
+            : _mixRgb(baseRgb, endRgb, (t - 0.5) * 2);
+        L.polyline([pts[i], pts[i + 1]], {
+          color: _rgbCss(c),
+          weight: 4,
+          opacity: 0.9,
+          lineCap: "round",
+        }).addTo(map);
+        added++;
+      }
+      L.circleMarker(pts[0], {
+        radius: 7, color: "#ffffff", weight: 2, fillColor: base, fillOpacity: 1,
+      }).addTo(map).bindTooltip(`${f.registration || ""} takeoff`, { direction: "top" });
+    } catch (err) {
+      console.error(`[compare] ${label}: failed adding polylines to map`, err);
     }
-    L.circleMarker(pts[0], {
-      radius: 7, color: "#ffffff", weight: 2, fillColor: base, fillOpacity: 1,
-    }).addTo(map).bindTooltip(`${f.registration || ""} takeoff`, { direction: "top" });
+    console.log(`[compare] ${label}: added ${added} polyline segment(s) to the map`);
     return pts;
   };
 
-  const all = [...drawTrack(A, colA), ...drawTrack(B, colB)];
-  if (all.length) map.fitBounds(L.latLngBounds(all), { padding: [40, 40] });
-  else map.setView([47.0, 8.0], 7);
+  const all = [...drawTrack(A, colA, "Flight A"), ...drawTrack(B, colB, "Flight B")];
+  if (all.length) {
+    try {
+      map.fitBounds(L.latLngBounds(all), { padding: [40, 40] });
+    } catch (err) {
+      console.error("[compare] fitBounds failed", err);
+      map.setView(all[0], 9);
+    }
+  } else {
+    console.warn("[compare] no track coordinates at all — keeping default view");
+    map.setView([47.0, 8.0], 7);
+  }
 }
 
 function drawCompareChart(A, B, colA, colB) {
