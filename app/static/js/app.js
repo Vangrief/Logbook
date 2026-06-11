@@ -1554,23 +1554,6 @@ async function addDiscoveredFlight(btn, aircraftId, firstSeen) {
 let compareMap = null;
 let compareChart = null;
 
-// Color helpers for the comparison track gradients. Mixing happens on RGB
-// triples; only the final value is turned into a CSS string. (Mixing CSS
-// strings directly produced rgb(NaN…) and made the polylines invisible.)
-function _hexToRgb(h) {
-  return [
-    parseInt(h.slice(1, 3), 16),
-    parseInt(h.slice(3, 5), 16),
-    parseInt(h.slice(5, 7), 16),
-  ];
-}
-function _mixRgb(a, b, t) {
-  return a.map((v, i) => Math.round(v + (b[i] - v) * t));
-}
-function _rgbCss(c) {
-  return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
-}
-
 // Short Zurich date for legends/cards, e.g. "04.06".
 function _shortDate(ts) {
   const [, mm, dd] = U.zurichDateKey(ts).split("-");
@@ -1597,9 +1580,13 @@ async function renderCompare(idA, idB) {
   );
   const colA = cssVar("--amber");
   const colB = cssVar("--sakura");
+  // Solid, well-separated colors for the two map tracks so they stay
+  // distinguishable when overlapping (opacity does the highlighting).
+  const trackA = "#c0392b"; // torii red
+  const trackB = "#f4a7b9"; // sakura pink
 
-  const card = (f, cls, label) => `
-    <div class="cmp-card ${cls}">
+  const card = (f, cls, label, hl) => `
+    <div class="cmp-card ${cls}" data-hl="${hl}">
       <div class="cmp-tag">${label}</div>
       <div class="cmp-reg">${U.esc(f.registration || "—")}</div>
       <div class="cmp-sub">${U.fmtDate(f.start_time)} · ${U.fmtDuration(f.duration_s)}</div>
@@ -1654,18 +1641,19 @@ async function renderCompare(idA, idB) {
     </div>
 
     <div class="cmp-cards">
-      ${card(A, "cmp-a", "Flight A")}
-      ${card(B, "cmp-b", "Flight B")}
+      ${card(A, "cmp-a", "Flight A", "a")}
+      ${card(B, "cmp-b", "Flight B", "b")}
     </div>
 
     <div class="detail-grid">
       <div class="map-wrap">
         <div id="cmp-map"></div>
         <div class="airports-info cmp-legend">
-          <div class="cl-row"><span class="cl-line" style="background:${colA}"></span>
+          <div class="cl-row" data-hl="a"><span class="cl-line" style="background:${trackA}"></span>
             A · ${U.esc(A.registration || "?")} ${_shortDate(A.start_time)}</div>
-          <div class="cl-row"><span class="cl-line" style="background:${colB}"></span>
+          <div class="cl-row" data-hl="b"><span class="cl-line" style="background:${trackB}"></span>
             B · ${U.esc(B.registration || "?")} ${_shortDate(B.start_time)}</div>
+          <div class="cl-hint">hover to highlight</div>
         </div>
       </div>
 
@@ -1691,7 +1679,7 @@ async function renderCompare(idA, idB) {
     </div>
   `;
 
-  drawCompareMap(A, B, colA, colB);
+  drawCompareMap(A, B, trackA, trackB);
   drawCompareChart(A, B, colA, colB);
   loadCompareWeather(A, B);
 }
@@ -1711,11 +1699,36 @@ function drawCompareMap(A, B, colA, colB) {
     }
   ).addTo(map);
 
-  // Each flight gets a light→full tint gradient of its own color so the
-  // direction of flight stays readable. All mixing is done on RGB triples —
-  // never on CSS strings (the previous string-mixing yielded rgb(NaN…) and
-  // silently invisible polylines).
-  const drawTrack = (f, base, label) => {
+  // Each track is a single solid-color line; the two are told apart by color
+  // and by opacity-based highlighting on hover (handled in CSS for a smooth
+  // 0.2s transition). The map container carries an hl-a / hl-b state class.
+  const DOT_BASE = 8;
+  const DOT_HL = 10;
+  const markers = { a: [], b: [] };
+
+  const mapEl = document.getElementById("cmp-map");
+  let pinned = null; // sticky highlight set by clicking a card/legend (mobile)
+
+  function applyHighlight(which) {
+    if (mapEl) {
+      mapEl.classList.toggle("hl-a", which === "a");
+      mapEl.classList.toggle("hl-b", which === "b");
+    }
+    markers.a.forEach((m) => m.setRadius(which === "a" ? DOT_HL : DOT_BASE));
+    markers.b.forEach((m) => m.setRadius(which === "b" ? DOT_HL : DOT_BASE));
+    document.querySelectorAll(".cmp-card, .cmp-legend .cl-row").forEach((el) => {
+      el.classList.toggle("cmp-active", which !== null && el.dataset.hl === which);
+    });
+  }
+  // Expose so the header cards (wired in renderCompare's DOM) can drive it.
+  const hoverIn = (which) => { if (!pinned) applyHighlight(which); };
+  const hoverOut = () => { if (!pinned) applyHighlight(null); };
+  const togglePin = (which) => {
+    pinned = pinned === which ? null : which;
+    applyHighlight(pinned);
+  };
+
+  const drawTrack = (f, base, key, label) => {
     const pts = (f.track || [])
       .filter((p) => p[1] != null && p[2] != null)
       .map((p) => [p[1], p[2]]); // [lat, lon] = [point[1], point[2]]
@@ -1728,37 +1741,42 @@ function drawCompareMap(A, B, colA, colB) {
     );
     if (pts.length < 2) return [];
 
-    const baseRgb = _hexToRgb(base);
-    const startRgb = _mixRgb(baseRgb, [255, 255, 255], 0.55);
-    const endRgb = _mixRgb(baseRgb, [0, 0, 0], 0.25);
-
-    let added = 0;
     try {
-      for (let i = 0; i < pts.length - 1; i++) {
-        const t = i / (pts.length - 1);
-        const c =
-          t < 0.5
-            ? _mixRgb(startRgb, baseRgb, t * 2)
-            : _mixRgb(baseRgb, endRgb, (t - 0.5) * 2);
-        L.polyline([pts[i], pts[i + 1]], {
-          color: _rgbCss(c),
-          weight: 4,
-          opacity: 0.9,
-          lineCap: "round",
-        }).addTo(map);
-        added++;
-      }
-      L.circleMarker(pts[0], {
-        radius: 7, color: "#ffffff", weight: 2, fillColor: base, fillOpacity: 1,
-      }).addTo(map).bindTooltip(`${f.registration || ""} takeoff`, { direction: "top" });
+      const line = L.polyline(pts, {
+        color: base,
+        weight: 3,
+        opacity: 0.35,
+        lineCap: "round",
+        lineJoin: "round",
+        className: `cmp-track cmp-${key}`,
+      }).addTo(map);
+      line.on("mouseover", () => hoverIn(key));
+      line.on("mouseout", () => hoverOut());
+
+      const dot = (pt, lbl) =>
+        L.circleMarker(pt, {
+          radius: DOT_BASE,
+          color: "#ffffff",
+          weight: 2,
+          fillColor: base,
+          fillOpacity: 1,
+          className: `cmp-dot cmp-${key}`,
+        })
+          .addTo(map)
+          .bindTooltip(`${f.registration || ""} ${lbl}`, { direction: "top" });
+      markers[key] = [dot(pts[0], "takeoff"), dot(pts[pts.length - 1], "landing")];
+      console.log(`[compare] ${label}: added solid polyline (${pts.length} pts) + 2 markers`);
     } catch (err) {
-      console.error(`[compare] ${label}: failed adding polylines to map`, err);
+      console.error(`[compare] ${label}: failed adding track to map`, err);
+      return [];
     }
-    console.log(`[compare] ${label}: added ${added} polyline segment(s) to the map`);
     return pts;
   };
 
-  const all = [...drawTrack(A, colA, "Flight A"), ...drawTrack(B, colB, "Flight B")];
+  const all = [
+    ...drawTrack(A, colA, "a", "Flight A"),
+    ...drawTrack(B, colB, "b", "Flight B"),
+  ];
   if (all.length) {
     try {
       map.fitBounds(L.latLngBounds(all), { padding: [40, 40] });
@@ -1770,6 +1788,16 @@ function drawCompareMap(A, B, colA, colB) {
     console.warn("[compare] no track coordinates at all — keeping default view");
     map.setView([47.0, 8.0], 7);
   }
+
+  // Wire the header cards and legend rows: hover highlights on desktop, click
+  // pins the highlight (the only way to identify tracks on touch screens).
+  document.querySelectorAll(".cmp-card, .cmp-legend .cl-row").forEach((el) => {
+    const which = el.dataset.hl;
+    if (which !== "a" && which !== "b") return;
+    el.addEventListener("mouseenter", () => hoverIn(which));
+    el.addEventListener("mouseleave", () => hoverOut());
+    el.addEventListener("click", () => togglePin(which));
+  });
 }
 
 function drawCompareChart(A, B, colA, colB) {

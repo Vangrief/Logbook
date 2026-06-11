@@ -638,6 +638,10 @@ input[type="color"] { padding: 4px; height: 42px; cursor: pointer; }
 }
 .cmp-card.cmp-a { border-left: 3px solid var(--amber); }
 .cmp-card.cmp-b { border-left: 3px solid var(--sakura); }
+/* Cards double as track selectors (the only way to highlight on touch). */
+.cmp-card { cursor: pointer; transition: box-shadow 0.2s, border-color 0.2s; }
+.cmp-card.cmp-active.cmp-a { box-shadow: 0 0 0 2px var(--amber); }
+.cmp-card.cmp-active.cmp-b { box-shadow: 0 0 0 2px var(--sakura); }
 .cmp-card .cmp-tag {
   font-size: 10px;
   font-weight: 700;
@@ -668,7 +672,13 @@ input[type="color"] { padding: 4px; height: 42px; cursor: pointer; }
   font-family: var(--mono);
   font-size: 12px;
   white-space: nowrap;
+  cursor: pointer;
+  padding: 1px 4px;
+  margin: 0 -4px;
+  border-radius: 4px;
+  transition: background 0.15s;
 }
+.cmp-legend .cl-row.cmp-active { background: rgba(var(--accent-rgb), 0.18); }
 .cmp-legend .cl-line {
   display: inline-block;
   width: 22px;
@@ -676,6 +686,32 @@ input[type="color"] { padding: 4px; height: 42px; cursor: pointer; }
   border-radius: 2px;
   flex: none;
 }
+.cmp-legend .cl-hint {
+  margin-top: 3px;
+  font-size: 10px;
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+/* Track highlighting: subtle by default, the hovered/pinned one pops while the
+   other fades. SVG presentation attributes are overridden by these rules, so
+   Leaflet's inline opacity is just a no-CSS fallback. */
+#cmp-map path.cmp-track,
+#cmp-map path.cmp-dot {
+  transition: stroke-opacity 0.2s ease, fill-opacity 0.2s ease;
+}
+#cmp-map path.cmp-track { stroke-opacity: 0.35; }
+#cmp-map path.cmp-dot { stroke-opacity: 0.35; fill-opacity: 0.35; }
+
+#cmp-map.hl-a path.cmp-a.cmp-track { stroke-opacity: 1; }
+#cmp-map.hl-a path.cmp-a.cmp-dot { stroke-opacity: 1; fill-opacity: 1; }
+#cmp-map.hl-a path.cmp-b.cmp-track { stroke-opacity: 0.15; }
+#cmp-map.hl-a path.cmp-b.cmp-dot { stroke-opacity: 0.15; fill-opacity: 0.15; }
+
+#cmp-map.hl-b path.cmp-b.cmp-track { stroke-opacity: 1; }
+#cmp-map.hl-b path.cmp-b.cmp-dot { stroke-opacity: 1; fill-opacity: 1; }
+#cmp-map.hl-b path.cmp-a.cmp-track { stroke-opacity: 0.15; }
+#cmp-map.hl-b path.cmp-a.cmp-dot { stroke-opacity: 0.15; fill-opacity: 0.15; }
 
 .cmp-table { width: 100%; border-collapse: collapse; }
 .cmp-table th {
